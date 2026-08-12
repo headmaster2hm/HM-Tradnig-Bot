@@ -1,0 +1,44 @@
+{
+  "symbol": "Crash 500 Index",
+  "timeframe": "M1",
+  "lot_size": 0.2,
+  "risk_percent": 1.0,
+  "use_risk_sizing": false,
+  "stop_loss_points": 200,
+  "take_profit_points": 300,
+  "magic_number": 50014,
+  "comment": "HMBotRSI",
+  "slippage": 30,
+  "spread_limit": 150,
+  "cooldown_candles": 3,
+  "max_trades_per_day": 10,
+  "daily_profit_target": 50.0,
+  "daily_loss_limit": 30.0,
+  "session_start": "00:00",
+  "session_end": "23:59",
+  "close_on_reverse": true,
+  "dry_run": true,
+  "enable_notifications": true,
+  "dark_mode": true,
+  "candle_count": 300,
+  "poll_interval_ms": 500,
+  "telegram": {
+    "enabled": false,
+    "bot_token": "",
+    "chat_id": "",
+    "remember_token": false
+  },
+  "indicators": {
+    "rsi_period": 14,
+    "ema_fast": 48,
+    "ema_slow": 50,
+    "rsi_levels": [0, 15, 30, 39, 50, 63, 70, 85, 100]
+  },
+  "mt5": {
+    "path": "",
+    "login": 0,
+    "password": "",
+    "server": "",
+    "remember_password": false
+  }
+}

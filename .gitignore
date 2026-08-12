@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local config / secrets (keep settings.dist.json)
+config/settings.json
+admin.json
+license.json
+
+# Databases & logs
+*.db
+*.sqlite3
+logs/
+*.log
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# PyInstaller
+*.manifest
+*.spec.bak
+
+# Python virtual environments
+.venv/
+venv/
+env/
+.venv_build/
+
+# Python cache
+__pycache__/
+.pytest_cache/
+
+# Build/output files
+build/
+dist/
