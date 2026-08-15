@@ -68,14 +68,13 @@ if errorlevel 1 goto :fail
 if not exist "dist\HM_Bridge_Agent.exe" goto :fail
 
 set "ISCC="
-if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" set "ISCC=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
-if not defined ISCC goto :install_inno
-goto :inno_ok
+call :find_iscc
+if defined ISCC goto :inno_ok
 
 :install_inno
 echo Inno Setup not found - installing it now (one time)...
 winget install -e --id JRSoftware.InnoSetup --silent --accept-package-agreements --accept-source-agreements
-if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" set "ISCC=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
+call :find_iscc
 if not defined ISCC goto :inno_fail
 
 :inno_ok
@@ -97,8 +96,25 @@ exit /b 0
 
 :inno_fail
 echo.
-echo Inno Setup install FAILED - re-run this script after installing it manually.
+echo Inno Setup install FAILED. It was not found in any of these locations:
+echo   %ProgramFiles(x86)%\Inno Setup 6\ISCC.exe
+echo   %ProgramFiles%\Inno Setup 6\ISCC.exe
+echo   %LocalAppData%\Programs\Inno Setup 6\ISCC.exe
+echo   %LocalAppData%\Programs\Inno Setup\ISCC.exe
+echo Install Inno Setup 6 manually from https://jrsoftware.org/isinfo.php
+echo then re-run this script.
 goto :fail
+
+:find_iscc
+if defined ISCC goto :eof
+if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" set "ISCC=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
+if defined ISCC goto :eof
+if exist "%ProgramFiles%\Inno Setup 6\ISCC.exe" set "ISCC=%ProgramFiles%\Inno Setup 6\ISCC.exe"
+if defined ISCC goto :eof
+if exist "%LocalAppData%\Programs\Inno Setup 6\ISCC.exe" set "ISCC=%LocalAppData%\Programs\Inno Setup 6\ISCC.exe"
+if defined ISCC goto :eof
+if exist "%LocalAppData%\Programs\Inno Setup\ISCC.exe" set "ISCC=%LocalAppData%\Programs\Inno Setup\ISCC.exe"
+goto :eof
 
 :fail
 echo.

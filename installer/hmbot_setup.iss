@@ -6,7 +6,7 @@
 ; is written to %LOCALAPPDATA%\HMBotTrader at runtime, never to {app}.
 
 #define MyAppName "HM Bot Trader"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "HM Bot Trader"
 #define MyAppExeName "HMBotTrader.exe"
 #define MyAppId "7C0E2F1B-9A4D-4B78-AC1D-2E5F6A3D8B14"

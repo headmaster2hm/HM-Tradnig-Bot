@@ -50,3 +50,6 @@ __pycache__/
 # Build/output files
 build/
 dist/
+
+# Installer binaries (built on Windows, uploaded separately)
+assets/*.exe

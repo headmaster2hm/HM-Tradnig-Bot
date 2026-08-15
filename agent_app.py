@@ -13,6 +13,7 @@ import argparse
 import json
 import logging
 import os
+import queue
 import sys
 import threading
 
@@ -210,6 +211,7 @@ class AgentApp:
         self.cfg = _load_config()
         self.agent: BridgeAgent | None = None
         self.agent_thread: threading.Thread | None = None
+        self._tasks: queue.Queue = queue.Queue()
 
         import tkinter as tk
         from tkinter import ttk
@@ -332,7 +334,17 @@ class AgentApp:
     # -- actions ----------------------------------------------------------
     def _detect(self) -> None:
         self.status_label.config(text="Looking for MetaTrader 5\u2026")
-        path = mt5_detect.detect_primary()
+        threading.Thread(target=self._detect_worker, daemon=True).start()
+
+    def _detect_worker(self) -> None:
+        try:
+            path = mt5_detect.detect_primary()
+        except Exception as exc:  # noqa: BLE001
+            path = ""
+            self._log(f"detection error: {exc}")
+        self._tasks.put(("detect_done", path))
+
+    def _on_detect_done(self, path: str) -> None:
         if path:
             self.var_mt5_path.set(path)
             self.status_label.config(text=f"Found MetaTrader 5: {path}")
@@ -366,33 +378,66 @@ class AgentApp:
             self.status_label.config(text="Bridge token is missing.")
             return
 
-        kwargs: dict = {}
         mt5_path = self.var_mt5_path.get().strip()
         if mt5_path:
-            kwargs["path"] = mt5_path
-        elif not mt5_detect.detect_primary():
+            self._start_agent(token, {"path": mt5_path})
+            return
+
+        # No terminal given — detect it in a background thread so the UI never
+        # freezes while PowerShell/registry detection runs.
+        self.start_btn.config(state="disabled")
+        self.status_label.config(text="Detecting MetaTrader 5\u2026")
+        self._log("detecting MetaTrader 5\u2026")
+
+        def _worker() -> None:
+            try:
+                found = mt5_detect.detect_primary()
+            except Exception as exc:  # noqa: BLE001
+                found = ""
+                self._log(f"detection error: {exc}")
+            self._tasks.put(("start_after_detect", token, found))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_start_after_detect(self, token: str, path: str) -> None:
+        self.start_btn.config(state="normal")
+        if path:
+            self.var_mt5_path.set(path)
+            self._log(f"auto-detected terminal: {path}")
+            self._start_agent(token, {"path": path})
+        else:
             self.status_label.config(
                 text="MetaTrader 5 not found \u2014 open MT5 and press Auto-detect first."
             )
-            return
+            self._log("no MetaTrader 5 terminal found")
 
-        self.cfg.update({"url": self.var_url.get().strip(), "token": token, "mt5_path": mt5_path})
+    def _start_agent(self, token: str, kwargs: dict) -> None:
+        url = self.var_url.get().strip() or DEFAULT_URL
+        self.cfg.update({"url": url, "token": token, "mt5_path": kwargs.get("path", "")})
         _save_config(self.cfg)
 
-        self.agent = BridgeAgent(
-            self.var_url.get().strip() or DEFAULT_URL, token, kwargs
-        )
+        self.agent = BridgeAgent(url, token, kwargs)
         self.agent_thread = threading.Thread(target=self.agent.run, daemon=True)
         self.agent_thread.start()
         self.start_btn.config(text="Stop agent", bg=BAD, fg="white")
         self.status_label.config(text="Connecting\u2026")
-        self._log(f"starting agent \u2192 {self.var_url.get().strip() or DEFAULT_URL}")
+        self._log(f"starting agent \u2192 {url}")
 
     # -- status loop ------------------------------------------------------
     def _set_dot(self, color: str) -> None:
         self.dot.itemconfig(self.dot_id, fill=color)
 
     def _poll_status(self) -> None:
+        try:
+            while True:
+                task = self._tasks.get_nowait()
+                kind = task[0]
+                if kind == "detect_done":
+                    self._on_detect_done(task[1])
+                elif kind == "start_after_detect":
+                    self._on_start_after_detect(task[1], task[2])
+        except queue.Empty:
+            pass
         try:
             agent = self.agent
             if agent is None:

@@ -1,0 +1,24 @@
+[Unit]
+Description=HM Bot Trader
+After=network.target
+
+[Service]
+# Change User and Group as appropriate for your system
+User=hm
+Group=www-data
+
+# Load environment variables from /etc/default/hmbot (or edit this file)
+EnvironmentFile=/etc/default/hmbot
+
+# Working directory: repository root (adjust if you installed elsewhere)
+WorkingDirectory=/home/hm/web/tradebot.headmaster.fun/public_html/HM-Tradnig-Bot
+
+# ExecStart: use the venv python path you chose when running setup
+ExecStart=/bin/sh -c 'exec /opt/hmbot/venv/bin/python /home/hm/web/tradebot.headmaster.fun/public_html/HM-Tradnig-Bot/main.py --host "${HM_HOST:-127.0.0.1}" --port "${HM_PORT:-8080}"'
+
+Restart=on-failure
+RestartSec=5s
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

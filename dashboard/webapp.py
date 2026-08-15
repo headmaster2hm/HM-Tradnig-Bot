@@ -8,6 +8,7 @@ the MT5 client and SQLite database are never touched concurrently.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import queue
@@ -37,6 +38,17 @@ from utils.paths import app_dir
 logger = get_logger("web")
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
+ROOT = Path(__file__).resolve().parent.parent
+ASSETS_DIR = ROOT / "assets"
+WINDOWS_SETUP = ASSETS_DIR / "HMBotTrader-Setup.exe"
+WINDOWS_VERSION = "1.1.0"
+
+# Hosts that are the public website. When the homepage is reached through one
+# of these the browser gets the download page instead of the local dashboard.
+PUBLIC_HOSTS = {"tradebot.headmaster.fun", "www.tradebot.headmaster.fun"}
+
+# Cache for the installer checksum/size, keyed by mtime+size of the .exe.
+_download_cache: tuple[str, str] | None = None
 
 # Browser <-> server secret placeholder: the real value never leaves this machine.
 KEEP = "__KEEP__"
@@ -89,6 +101,37 @@ def _tail_log(max_lines: int = 300) -> list[str]:
         return [line.rstrip("\n") for line in lines[-max_lines:]]
     except OSError:
         return []
+
+
+def _human_bytes(num: int) -> str:
+    """Format a byte count as a compact human string (e.g. 46.2 MB)."""
+    value = float(num)
+    for unit in ("B", "KB", "MB", "GB"):
+        if value < 1024 or unit == "GB":
+            return f"{int(value)} {unit}" if unit == "B" else f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{num} B"
+
+
+def _file_sha256(path: Path) -> str:
+    """Checksum of a file, cached until the file's mtime or size changes."""
+    global _download_cache
+    try:
+        stat = path.stat()
+        key = f"{stat.st_mtime_ns}:{stat.st_size}"
+    except OSError:
+        return ""
+    if _download_cache is not None and _download_cache[0] == key:
+        return _download_cache[1]
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while True:
+            chunk = handle.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+    _download_cache = (key, digest.hexdigest())
+    return _download_cache[1]
 
 
 def _time(value: Any) -> str | None:
@@ -405,6 +448,7 @@ MIME = {
     ".ico": "image/x-icon",
     ".json": "application/json; charset=utf-8",
     ".woff2": "font/woff2",
+    ".exe": "application/x-msdownload",
 }
 
 
@@ -473,11 +517,65 @@ def make_handler(engine: Engine) -> type[BaseHTTPRequestHandler]:
             self.end_headers()
             self.wfile.write(body)
 
+        def _is_public_host(self) -> bool:
+            host = (self.headers.get("Host") or "").split(":", 1)[0].strip().lower()
+            return host in PUBLIC_HOSTS
+
+        def _download_info(self) -> None:
+            info: dict[str, Any] = {
+                "ok": False,
+                "file": WINDOWS_SETUP.name,
+                "version": WINDOWS_VERSION,
+            }
+            if not WINDOWS_SETUP.is_file():
+                self._send_json(info, 404)
+                return
+            try:
+                size = WINDOWS_SETUP.stat().st_size
+            except OSError as exc:
+                self._send_json({**info, "error": str(exc)}, 500)
+                return
+            info["ok"] = True
+            info["size_bytes"] = size
+            info["size_human"] = _human_bytes(size)
+            info["sha256"] = _file_sha256(WINDOWS_SETUP)
+            self._send_json(info)
+
+        def _download_windows(self) -> None:
+            if not WINDOWS_SETUP.is_file():
+                self._send_json({"ok": False, "error": "Windows installer not found."}, 404)
+                return
+            try:
+                size = WINDOWS_SETUP.stat().st_size
+            except OSError as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 500)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/x-msdownload")
+            self.send_header(
+                "Content-Disposition", 'attachment; filename="HMBotTrader-Setup.exe"'
+            )
+            self.send_header("Content-Length", str(size))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            try:
+                with WINDOWS_SETUP.open("rb") as handle:
+                    while True:
+                        chunk = handle.read(256 * 1024)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
         def _serve_static(self, path: str) -> None:
             if path in ("/", ""):
-                path = "/home.html"
+                path = "/download.html" if self._is_public_host() else "/home.html"
             elif path == "/app":
                 path = "/index.html"
+            elif path in ("/download", "/downloads"):
+                path = "/download.html"
             target = (WEB_DIR / path.lstrip("/")).resolve()
             if not target.is_relative_to(WEB_DIR):
                 self.send_error(403, "Forbidden")
@@ -939,6 +1037,10 @@ def make_handler(engine: Engine) -> type[BaseHTTPRequestHandler]:
                     self._export_csv()
                 except Exception as exc:  # noqa: BLE001
                     self._send_json({"error": str(exc)}, 500)
+            elif path == "/api/download/info":
+                self._download_info()
+            elif path == "/api/download/windows":
+                self._download_windows()
             elif path.startswith("/api/control/"):
                 query = parse_qs(parsed.query)
                 self._handle_control_get(path, query)
