@@ -87,6 +87,7 @@ def _register_connected_account(telemetry: dict[str, Any]) -> None:
         db = _get_admin_db()
         db.get_or_create_user_by_account(login)
         db.touch_user_account(login)
+        logger.info("registered connected MT5 account %s", login)
     except Exception:  # noqa: BLE001
         logger.exception("failed to register connected MT5 account %s", login)
 
