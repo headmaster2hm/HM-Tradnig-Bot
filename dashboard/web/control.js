@@ -302,6 +302,27 @@ async function renderOverview(content, topRight) {
     engineCard.appendChild(mini);
     content.appendChild(engineCard);
 
+    const b = res.bridge || {};
+    const bridgeCard = el("div", "card");
+    bridgeCard.appendChild(el("h3", "card-title", "Connected MT5"));
+    if (!b.connected || !b.login) {
+      bridgeCard.appendChild(el("p", "empty", "No MT5 terminal connected right now."));
+    } else {
+      const bline = el("p", "", "");
+      bline.appendChild(el("span", "engine-dot live"));
+      bline.appendChild(
+        document.createTextNode(
+          `Account ${esc(b.login)}${b.server ? " · " + esc(b.server) : ""}${b.name ? " · " + esc(b.name) : ""}`
+        )
+      );
+      bridgeCard.appendChild(bline);
+      const bgrid = el("div", "stat-grid");
+      bgrid.appendChild(statCard("Balance", fmtMoney(b.balance)));
+      bgrid.appendChild(statCard("Currency", esc(b.currency || "—")));
+      bridgeCard.appendChild(bgrid);
+    }
+    content.appendChild(bridgeCard);
+
     const payCard = el("div", "card");
     payCard.appendChild(el("h3", "card-title", "Recent payments"));
     if (!res.payments || !res.payments.length) {
@@ -481,7 +502,7 @@ async function renderUsers(content, topRight) {
 
   const card = el("div", "card");
   const tbl = el("table", "tbl");
-  tbl.appendChild(el("thead", "", "<tr><th>ID</th><th>MT5 account</th><th>Email</th><th>Name</th><th>Status</th><th>Payments</th><th>Keys</th><th>Created</th><th></th></tr>"));
+  tbl.appendChild(el("thead", "", "<tr><th>ID</th><th>MT5 account</th><th>Email</th><th>Name</th><th>Status</th><th>Payments</th><th>Keys</th><th>Last seen</th><th>Created</th><th></th></tr>"));
   const tbody = el("tbody");
   users.forEach((u) => {
     const tr = el("tr");
@@ -512,6 +533,14 @@ async function renderUsers(content, topRight) {
     tr.appendChild(el("td", "", pill(u.status === "active" ? "active" : "disabled", u.status === "active" ? "ok" : "bad")));
     tr.appendChild(el("td", "", `${u.payment_count} (${u.paid_count} paid)`));
     tr.appendChild(el("td", "", u.key_count));
+
+    const lastSeenAt = u.last_seen_at ? new Date(u.last_seen_at).getTime() : null;
+    const online = !!lastSeenAt && Date.now() - lastSeenAt < 10 * 60 * 1000;
+    const seenTd = el("td", "");
+    if (online) seenTd.appendChild(el("span", "engine-dot live"));
+    seenTd.appendChild(document.createTextNode(u.last_seen_at ? fmtDT(u.last_seen_at) : "—"));
+    tr.appendChild(seenTd);
+
     tr.appendChild(el("td", "mono-cell", fmtDT(u.created_at)));
     tr.appendChild(td);
     tbody.appendChild(tr);

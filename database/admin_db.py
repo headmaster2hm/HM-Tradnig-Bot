@@ -58,6 +58,7 @@ class AdminDatabase:
                     name TEXT,
                     status TEXT NOT NULL DEFAULT 'active',
                     notes TEXT,
+                    last_seen_at TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
@@ -70,6 +71,8 @@ class AdminDatabase:
             }
             if "mt5_account" not in columns:
                 conn.execute("ALTER TABLE users ADD COLUMN mt5_account TEXT")
+            if "last_seen_at" not in columns:
+                conn.execute("ALTER TABLE users ADD COLUMN last_seen_at TEXT")
             conn.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_mt5_account ON users(mt5_account)"
             )
@@ -152,6 +155,42 @@ class AdminDatabase:
                 "SELECT * FROM users WHERE mt5_account = ?", (account,)
             ).fetchone()
         return dict(row) if row else None
+
+    def get_or_create_user_by_account(
+        self,
+        mt5_account: str,
+        name: str = "",
+        notes: str = "",
+    ) -> dict[str, Any]:
+        account = _normalize_account(mt5_account)
+        if not account:
+            raise ValueError("MT5 account number is required.")
+        existing = self.get_user_by_account(account)
+        if existing:
+            return existing
+        try:
+            uid = self.create_user(account, "", name, notes)
+        except Exception:  # noqa: BLE001 -- lost a race against the UNIQUE index
+            existing = self.get_user_by_account(account)
+            if existing:
+                return existing
+            raise
+        user = self.get_user(uid)
+        if user is None:
+            raise RuntimeError(f"failed to load created user for account {account}")
+        return user
+
+    def touch_user_account(self, mt5_account: str) -> bool:
+        account = _normalize_account(mt5_account)
+        if not account:
+            return False
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "UPDATE users SET last_seen_at = ?, updated_at = ? WHERE mt5_account = ?",
+                (_now(), _now(), account),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
 
     def set_user_status(self, user_id: int, status: str) -> bool:
         with self._connect() as conn:

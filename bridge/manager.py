@@ -48,6 +48,9 @@ class BridgeManager:
         self._pending_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._telemetry: dict[str, Any] = {}
+        self._attached_since: float | None = None
+        self._last_telemetry_at: float | None = None
+        self.on_telemetry: Callable[[dict[str, Any]], None] | None = None
         self._last_log = 0.0
 
     # -- transport -------------------------------------------------------
@@ -56,6 +59,7 @@ class BridgeManager:
             if self._conn is not None:
                 return False
             self._conn = conn
+            self._attached_since = time.time()
         logger.info("bridge agent attached")
         return True
 
@@ -63,6 +67,9 @@ class BridgeManager:
         with self._state_lock:
             if self._conn is conn:
                 self._conn = None
+                self._attached_since = None
+                self._telemetry = {}
+                self._last_telemetry_at = None
         with self._pending_lock:
             for _event, holder in self._pending.values():
                 holder["error"] = "bridge disconnected"
@@ -139,6 +146,12 @@ class BridgeManager:
             if isinstance(data, dict):
                 with self._state_lock:
                     self._telemetry = data
+                    self._last_telemetry_at = time.time()
+                if self.on_telemetry is not None:
+                    try:
+                        self.on_telemetry(data)
+                    except Exception:  # noqa: BLE001
+                        logger.exception("bridge on_telemetry hook failed")
             return
         logger.debug("bridge: unhandled message %r", payload)
 
@@ -146,6 +159,24 @@ class BridgeManager:
     def telemetry(self) -> dict[str, Any]:
         with self._state_lock:
             return dict(self._telemetry)
+
+    def bridge_status(self) -> dict[str, Any]:
+        with self._state_lock:
+            connected = self._conn is not None and not self._conn.closed
+            telemetry = dict(self._telemetry)
+            last_telemetry_at = self._last_telemetry_at
+            since = self._attached_since
+        account = telemetry.get("account") or {}
+        return {
+            "connected": connected,
+            "since": since,
+            "last_telemetry_at": last_telemetry_at,
+            "login": account.get("login"),
+            "server": account.get("server"),
+            "name": account.get("name"),
+            "balance": account.get("balance"),
+            "currency": account.get("currency"),
+        }
 
     def _throttled_log(self, fmt: str, *args: Any) -> None:
         now = time.time()

@@ -128,6 +128,9 @@ class FakeAgent:
         except Exception:  # noqa: BLE001
             pass
 
+    def send_telemetry(self, data: dict) -> None:
+        self.ws.send(json.dumps({"type": "telemetry", "data": data}))
+
 
 @pytest.fixture()
 def bridge_server():
@@ -221,3 +224,56 @@ def test_bridge_down_fails_fast(bridge_server):
     assert mt5.initialize() is False
     assert mt5.terminal_info() is None
     assert mt5.account_info() is None
+
+
+def test_bridge_telemetry_and_status(bridge_server):
+    _server, port = bridge_server
+    manager = get_manager()
+    original = manager.on_telemetry
+    manager.on_telemetry = None  # keep the test out of the real admin DB
+    try:
+        agent = FakeAgent(f"ws://127.0.0.1:{port}/bridge/ws")
+        try:
+            assert _wait_bridge(manager)
+            agent.send_telemetry({"account": _account()})
+            for _ in range(50):
+                if manager.bridge_status().get("login") == 50014:
+                    break
+                time.sleep(0.1)
+            status = manager.bridge_status()
+            assert status["connected"] is True
+            assert status["login"] == 50014
+            assert status["server"] == "DemoBroker"
+            assert status["name"] == "Test Account"
+            assert manager.telemetry()["account"]["login"] == 50014
+        finally:
+            agent.close()
+    finally:
+        manager.on_telemetry = original
+
+
+def test_make_handler_wires_telemetry_hook(bridge_server):
+    from dashboard import webapp
+
+    assert get_manager().on_telemetry is webapp._register_connected_account
+
+
+def test_register_connected_account_writes_user(tmp_path, monkeypatch):
+    from database.admin_db import AdminDatabase
+    from dashboard import webapp
+
+    db = AdminDatabase(tmp_path / "control.db")
+    monkeypatch.setattr(webapp, "_get_admin_db", lambda: db)
+    webapp._connected_account_seen["login"] = ""
+    webapp._connected_account_seen["ts"] = 0.0
+
+    webapp._register_connected_account({"account": {"login": 60001, "server": "DemoBroker"}})
+    user = db.get_user_by_account("60001")
+    assert user is not None
+    assert user["status"] == "active"
+    assert user["last_seen_at"] is not None
+
+    webapp._register_connected_account({"account": {}})
+    webapp._register_connected_account({"account": {"login": "SIM"}})
+    webapp._register_connected_account({"account": {"login": "not-a-number"}})
+    assert len(db.list_users()) == 1

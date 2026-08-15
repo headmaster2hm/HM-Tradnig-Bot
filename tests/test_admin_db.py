@@ -102,6 +102,7 @@ class TestUsers:
         assert legacy is not None
         assert legacy["email"] == "legacy@example.com"
         assert legacy["mt5_account"] is None
+        assert legacy["last_seen_at"] is None
         uid = db.create_user("50022", "new@example.com")
         assert db.get_user(uid)["mt5_account"] == "50022"
 
@@ -111,6 +112,28 @@ class TestUsers:
         db.create_user("50024", "")
         db.create_user("50025", "  ")
         assert len(db.list_users()) == 3
+
+    def test_get_or_create_user_by_account(self, db: AdminDatabase) -> None:
+        created = db.get_or_create_user_by_account("50026")
+        assert created["mt5_account"] == "50026"
+        assert created["status"] == "active"
+        again = db.get_or_create_user_by_account("50026")
+        assert again["id"] == created["id"]
+        assert len(db.list_users()) == 1
+
+    def test_get_or_create_requires_account(self, db: AdminDatabase) -> None:
+        with pytest.raises(ValueError):
+            db.get_or_create_user_by_account("")
+        with pytest.raises(ValueError):
+            db.get_or_create_user_by_account("   ")
+
+    def test_touch_user_account(self, db: AdminDatabase) -> None:
+        db.get_or_create_user_by_account("50027")
+        assert db.get_user_by_account("50027")["last_seen_at"] is None
+        assert db.touch_user_account("50027") is True
+        assert db.get_user_by_account("50027")["last_seen_at"] is not None
+        assert db.touch_user_account("99999") is False
+        assert db.touch_user_account("") is False
 
 
 class TestPayments:

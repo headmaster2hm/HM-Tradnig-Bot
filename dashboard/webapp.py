@@ -23,6 +23,7 @@ from urllib.parse import parse_qs, urlparse
 import pandas as pd
 
 from backtest import run_backtest
+from bridge.manager import get_manager
 from config import AppConfig, config_security_notices, load_config, save_config
 from config.config_loader import _build_config, _merge
 from database.admin_db import AdminDatabase
@@ -48,6 +49,34 @@ def _get_admin_db() -> AdminDatabase:
     if _admin_db is None:
         _admin_db = AdminDatabase()
     return _admin_db
+
+
+_connected_account_seen: dict[str, Any] = {"login": "", "ts": 0.0}
+
+
+def _register_connected_account(telemetry: dict[str, Any]) -> None:
+    """Auto-track MT5 accounts that connect via the bridge.
+
+    The bridge agent pushes telemetry (with the MT5 account info) every
+    second. When a real login appears we make sure a users row exists and
+    stamp last_seen_at so the account shows up in the admin Users tab.
+    Writes are throttled to ~once a minute per account.
+    """
+    account = telemetry.get("account") or {}
+    login = str(account.get("login") or "").strip()
+    if not login or login == "SIM" or not login.isdigit():
+        return
+    now = time.time()
+    if login == _connected_account_seen["login"] and now - _connected_account_seen["ts"] < 60:
+        return
+    _connected_account_seen["login"] = login
+    _connected_account_seen["ts"] = now
+    try:
+        db = _get_admin_db()
+        db.get_or_create_user_by_account(login)
+        db.touch_user_account(login)
+    except Exception:  # noqa: BLE001
+        logger.exception("failed to register connected MT5 account %s", login)
 
 
 def _tail_log(max_lines: int = 300) -> list[str]:
@@ -380,6 +409,8 @@ MIME = {
 
 
 def make_handler(engine: Engine) -> type[BaseHTTPRequestHandler]:
+    get_manager().on_telemetry = _register_connected_account
+
     class DashboardHandler(BaseHTTPRequestHandler):
         server_version = "HM Bot Trader/1.0"
 
@@ -545,6 +576,7 @@ def make_handler(engine: Engine) -> type[BaseHTTPRequestHandler]:
                 "store": db.overview(license_util.PRICE),
                 "license": {"price": license_util.PRICE, "currency": license_util.CURRENCY},
                 "engine": self._engine_summary(),
+                "bridge": get_manager().bridge_status(),
                 "payments": db.list_payments(status="pending")[:8],
             }
 
