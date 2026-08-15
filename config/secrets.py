@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 ENV_MT5_PASSWORD = "HM_MT5_PASSWORD"
 ENV_TELEGRAM_TOKEN = "HM_TELEGRAM_BOT_TOKEN"
+ENV_BRIDGE_TOKEN = "HM_BRIDGE_TOKEN"
 
 
 def resolve_mt5_password(config: AppConfig) -> str:
@@ -19,6 +20,13 @@ def resolve_mt5_password(config: AppConfig) -> str:
     if env:
         return env
     return (config.mt5.password or "").strip()
+
+
+def resolve_bridge_token(config: AppConfig) -> str:
+    env = os.environ.get(ENV_BRIDGE_TOKEN, "").strip()
+    if env:
+        return env
+    return (config.mt5_bridge.token or "").strip()
 
 
 def resolve_telegram_token(config: AppConfig) -> str:
@@ -39,6 +47,11 @@ def secrets_on_disk_warnings(config: AppConfig) -> list[str]:
         warnings.append(
             "Telegram bot token is stored in settings.json. "
             f"Prefer {ENV_TELEGRAM_TOKEN} instead."
+        )
+    if (config.mt5_bridge.token or "").strip():
+        warnings.append(
+            "Bridge token is stored in settings.json. "
+            f"Prefer the {ENV_BRIDGE_TOKEN} environment variable instead."
         )
     return warnings
 
@@ -61,4 +74,5 @@ def sanitize_config_for_disk(config: AppConfig) -> AppConfig:
         clean.mt5.password = ""
     if not getattr(clean.telegram, "remember_token", False):
         clean.telegram.bot_token = ""
+    clean.mt5_bridge.token = ""
     return clean

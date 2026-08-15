@@ -1,9 +1,15 @@
 """One-time activation licensing for HM Bot Trader.
 
 New users pay a one-time fee to activate the bot. After payment they
-receive a license key which they paste into the dashboard once. The key
-is validated locally, stored on their machine, and never expires — so it
-can be reused after reinstallation without paying again.
+receive a license key which they paste into the dashboard once, together
+with their MetaTrader 5 account number. The key is validated locally and
+bound to that one MT5 account: the bot refuses to trade on any other MT5
+account (paper/simulation mode "SIM" is allowed). The binding survives
+reinstallation, so the same key can be re-entered after a fresh install
+with no second payment.
+
+Binding is enforced locally — the admin side (control panel) keeps the
+seller's record of which key belongs to which MT5 account.
 """
 
 from __future__ import annotations
@@ -91,6 +97,23 @@ def _read_license() -> dict[str, Any]:
         return {}
 
 
+def _normalize_account(account: Any) -> str | None:
+    """Return a trimmed account login string, or None when absent/blank."""
+    if account is None:
+        return None
+    text = str(account).strip()
+    return text if text else None
+
+
+def bound_mt5_account() -> str | None:
+    """The MT5 account login the active license key is bound to, or None."""
+    record = _read_license()
+    key = str(record.get("key", "") or "")
+    if not validate_key(key):
+        return None
+    return _normalize_account(record.get("mt5_account"))
+
+
 def is_activated() -> bool:
     env_key = os.environ.get("HM_LICENSE_KEY", "").strip()
     if env_key and validate_key(env_key):
@@ -99,16 +122,68 @@ def is_activated() -> bool:
     return validate_key(str(record.get("key", "") or ""))
 
 
-def activate(key: str) -> tuple[bool, str]:
-    """Store and enable a license key. Returns (ok, error_message)."""
+def check_account(login: Any) -> tuple[bool, str]:
+    """Return (ok, error) for connecting/trading on ``login``.
+
+    A license bound to an MT5 account may only run on that account.
+    Paper/simulation mode reports "SIM" and is always allowed; an
+    unbound (legacy) license is always allowed.
+    """
+    bound = bound_mt5_account()
+    if not bound:
+        return True, ""
+    if login is None:
+        return True, ""
+    current = str(login).strip()
+    if current == "SIM":
+        return True, ""
+    if current == bound:
+        return True, ""
+    return (
+        False,
+        f"This license key is bound to MT5 account {bound}, but the bot is "
+        f"connected to account {current}. Log into the licensed MT5 account "
+        "or contact the seller to transfer the license.",
+    )
+
+
+def activate(key: str, mt5_account: Any = None) -> tuple[bool, str]:
+    """Store, enable and bind a license key. Returns (ok, error_message).
+
+    ``mt5_account`` is the MetaTrader 5 login the key is bound to. A key
+    that was already activated for a different account cannot be reused
+    for another one.
+    """
     if not key or not key.strip():
         return False, "Please paste your license key."
     if not validate_key(key):
         return False, "That license key is not valid. Check for typos or contact the seller."
+
+    account = _normalize_account(mt5_account)
+    previous = _read_license()
+    prev_key = str(previous.get("key", "") or "")
+    prev_account = _normalize_account(previous.get("mt5_account"))
+    if (
+        prev_key
+        and validate_key(prev_key)
+        and _normalize(prev_key) == _normalize(key)
+        and prev_account
+        and account
+        and prev_account != account
+    ):
+        return (
+            False,
+            f"This license key is already bound to MT5 account {prev_account} — "
+            "it can only be used with that account. Enter the correct MT5 "
+            "account number or contact the seller.",
+        )
+
     record = {
         "key": key.strip(),
         "activated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
+    if account:
+        record["mt5_account"] = account
     try:
         license_path().parent.mkdir(parents=True, exist_ok=True)
         license_path().write_text(json.dumps(record, indent=2), encoding="utf-8")
@@ -122,10 +197,13 @@ def status() -> dict[str, Any]:
     record = _read_license()
     key = str(record.get("key", "") or "")
     valid = validate_key(key)
+    bound = bound_mt5_account() if valid else None
     return {
         "activated": is_activated(),
         "key_hint": (key[:7] + "…") if valid and key else "",
         "activated_at": record.get("activated_at") if valid else None,
+        "mt5_account": bound,
+        "account_bound": bool(bound),
         "price": PRICE,
         "currency": CURRENCY,
         "payment_url": PAYMENT_URL,

@@ -40,5 +40,10 @@
     "password": "",
     "server": "",
     "remember_password": false
+  },
+  "mt5_bridge": {
+    "enabled": false,
+    "url": "wss://tradebot.headmaster.fun/bridge/ws",
+    "token": ""
   }
 }

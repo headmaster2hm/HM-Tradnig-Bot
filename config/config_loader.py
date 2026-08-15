@@ -45,6 +45,13 @@ class MT5Config:
 
 
 @dataclass
+class MT5BridgeConfig:
+    enabled: bool = False
+    url: str = "wss://tradebot.headmaster.fun/bridge/ws"
+    token: str = ""
+
+
+@dataclass
 class AppConfig:
     symbol: str = "Crash 500 Index"
     timeframe: str = "M1"
@@ -72,6 +79,7 @@ class AppConfig:
     telegram: TelegramConfig = field(default_factory=TelegramConfig)
     indicators: IndicatorConfig = field(default_factory=IndicatorConfig)
     mt5: MT5Config = field(default_factory=MT5Config)
+    mt5_bridge: MT5BridgeConfig = field(default_factory=MT5BridgeConfig)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -90,6 +98,7 @@ def _merge(defaults: dict[str, Any], loaded: dict[str, Any]) -> dict[str, Any]:
 def _build_config(data: dict[str, Any]) -> AppConfig:
     tg = data.get("telegram") or {}
     mt5 = data.get("mt5") or {}
+    bridge = data.get("mt5_bridge") or {}
     return AppConfig(
         symbol=data["symbol"],
         timeframe=data["timeframe"],
@@ -127,6 +136,11 @@ def _build_config(data: dict[str, Any]) -> AppConfig:
             password=str(mt5.get("password", "")),
             server=str(mt5.get("server", "")),
             remember_password=bool(mt5.get("remember_password", False)),
+        ),
+        mt5_bridge=MT5BridgeConfig(
+            enabled=bool(bridge.get("enabled", False)),
+            url=str(bridge.get("url", "wss://tradebot.headmaster.fun/bridge/ws")),
+            token=str(bridge.get("token", "")),
         ),
     )
 

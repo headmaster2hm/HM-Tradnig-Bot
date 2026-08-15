@@ -160,13 +160,20 @@ Tips:
 4. Keep `"dry_run": true` for paper soak-tests; only set `"dry_run": false` after demo fills work.
 5. Start the bot from the dashboard.
 
-## Run (web browser)
+## Run
 
 ```powershell
 python main.py
 ```
 
-Your browser opens automatically at `http://127.0.0.1:PORT` with the dashboard:
+The dashboard opens in a **native Windows window** (Edge WebView2 — no browser
+tab). Pass `--browser` to open it in your default browser instead:
+
+```powershell
+python main.py --browser
+```
+
+The dashboard shows:
 
 - Price candlestick chart + entry/exit markers
 - RSI window styled like MT5 (blue RSI, yellow EMA48, black EMA50, custom levels)
@@ -248,6 +255,29 @@ financial advice, or a finished commercial trading product.
 **Demo / paper candidate** with money-safety gates, secrets hygiene, and automated tests.
 
 ## Packaging a Windows `.exe` (for sharing)
+
+### Option A — proper installer (`setup.exe`, recommended for end users)
+
+Builds the app with PyInstaller, then wraps it in an **Inno Setup installer**
+with Start Menu + desktop shortcuts, an uninstaller, and per-user data under
+`%LOCALAPPDATA%\HMBotTrader`. PyInstaller and Inno Setup are installed
+automatically the first time.
+
+```bat
+build_installer.bat
+```
+
+or
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\build_installer.ps1
+```
+
+Output: `dist\HMBotTrader-Setup.exe` — send that **one file** to users. They
+run it, click through the wizard, and get shortcuts + an uninstaller. No
+Python needed on their side.
+
+### Option B — portable folder / zip
 
 ```bat
 build_exe.bat

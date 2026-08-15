@@ -217,9 +217,17 @@ class MT5Client:
 
     def connect(self) -> bool:
         try:
-            import MetaTrader5 as mt5
+            if getattr(self.config, "mt5_bridge", None) and self.config.mt5_bridge.enabled:
+                from bridge.remote_mt5 import RemoteMT5
 
-            self._mt5 = mt5
+                mt5: Any = RemoteMT5()
+                self._mt5 = mt5
+                logger.info("Using remote MT5 bridge (%s)", self.config.mt5_bridge.url)
+            else:
+                import MetaTrader5 as mt5
+
+                self._mt5 = mt5
+
             kwargs: dict[str, Any] = {}
             if self.config.mt5.path:
                 kwargs["path"] = self.config.mt5.path

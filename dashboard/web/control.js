@@ -272,7 +272,7 @@ async function renderOverview(content, topRight) {
 
     content.innerHTML = "";
     const stats = [
-      ["Customers", s.total_users ?? 0],
+      ["MT5 accounts", s.total_users ?? 0],
       ["Active", s.active_users ?? 0],
       ["Pending payments", s.pending_payments ?? 0],
       ["Paid payments", s.paid_payments ?? 0],
@@ -481,7 +481,7 @@ async function renderUsers(content, topRight) {
 
   const card = el("div", "card");
   const tbl = el("table", "tbl");
-  tbl.appendChild(el("thead", "", "<tr><th>ID</th><th>Email</th><th>Name</th><th>Status</th><th>Payments</th><th>Keys</th><th>Created</th><th></th></tr>"));
+  tbl.appendChild(el("thead", "", "<tr><th>ID</th><th>MT5 account</th><th>Email</th><th>Name</th><th>Status</th><th>Payments</th><th>Keys</th><th>Created</th><th></th></tr>"));
   const tbody = el("tbody");
   users.forEach((u) => {
     const tr = el("tr");
@@ -506,6 +506,7 @@ async function renderUsers(content, topRight) {
     );
     td.appendChild(actions);
     tr.appendChild(el("td", "mono-cell", u.id));
+    tr.appendChild(el("td", "mono-cell", esc(u.mt5_account || "—")));
     tr.appendChild(el("td", "", esc(u.email || "—")));
     tr.appendChild(el("td", "", esc(u.name || "—")));
     tr.appendChild(el("td", "", pill(u.status === "active" ? "active" : "disabled", u.status === "active" ? "ok" : "bad")));
@@ -539,12 +540,13 @@ async function issueKey(userId) {
 
 function openUserForm(user) {
   const body = el("div", "");
-  body.appendChild(textField("Email", "u-email", user ? user.email : "", "email"));
+  body.appendChild(textField("MT5 account number (login)", "u-account", user ? user.mt5_account : "", "text"));
+  body.appendChild(textField("Email (optional)", "u-email", user ? user.email : "", "email"));
   body.appendChild(textField("Name", "u-name", user ? user.name : "", "text"));
   body.appendChild(textArea("Notes", "u-notes", user ? user.notes : ""));
   openDialog({
     title: user ? "Edit user" : "Add user",
-    sub: user ? `ID ${user.id}` : "New customer record",
+    sub: user ? `ID ${user.id}` : "The MT5 account identifies the customer — one license key per account.",
     body,
     buttons: [
       {
@@ -553,11 +555,12 @@ function openUserForm(user) {
         fn: async (done) => {
           const payload = {
             id: user ? user.id : undefined,
+            mt5_account: $("u-account").value.trim(),
             email: $("u-email").value.trim(),
             name: $("u-name").value.trim(),
             notes: $("u-notes").value.trim(),
           };
-          if (!payload.email) throw new Error("Email is required.");
+          if (!payload.mt5_account) throw new Error("MT5 account number is required.");
           const res = await postJSON(user ? "/api/control/users/update" : "/api/control/users", payload);
           if (!res.ok) throw new Error(res.error);
           done();
@@ -619,7 +622,7 @@ function paymentTable(payments) {
     td.appendChild(actions);
     const statusPill = p.status === "paid" ? pill("paid", "ok") : p.status === "refunded" ? pill("refunded", "bad") : pill("pending", "warn");
     tr.appendChild(el("td", "mono-cell", p.id));
-    tr.appendChild(el("td", "", esc(p.user_email || p.user_name || "—")));
+    tr.appendChild(el("td", "", esc(p.user_account || p.user_email || p.user_name || "—")));
     tr.appendChild(el("td", "", pill(String(p.chain || "").toUpperCase(), p.chain === "btc" ? "info" : "")));
     tr.appendChild(el("td", "mono-cell", esc(p.address || "—")));
     tr.appendChild(el("td", "", p.amount_expected != null ? `${p.amount_expected} ${p.unit || ""}` : "—"));
@@ -651,7 +654,7 @@ async function openPaymentForm() {
   users.forEach((u) => {
     const opt = document.createElement("option");
     opt.value = u.id;
-    opt.textContent = `${u.email || u.name || "user #" + u.id}`;
+    opt.textContent = `${u.mt5_account || u.email || u.name || "user #" + u.id}`;
     sel.appendChild(opt);
   });
   const chainSel = el("select", "input");
@@ -784,7 +787,7 @@ async function renderKeys(content, topRight) {
     }
     td.appendChild(actions);
     tr.appendChild(el("td", "mono-cell", esc(k.key)));
-    tr.appendChild(el("td", "", esc(k.user_email || k.user_name || "—")));
+    tr.appendChild(el("td", "", esc(k.user_account || k.user_email || k.user_name || "—")));
     const pillCls = k.status === "active" ? "ok" : k.status === "revoked" ? "bad" : "info";
     tr.appendChild(el("td", "", pill(k.status, pillCls)));
     tr.appendChild(el("td", "mono-cell", fmtDT(k.issued_at)));
@@ -808,28 +811,29 @@ async function openKeyForm() {
   const sel = el("select", "input");
   const none = document.createElement("option");
   none.value = "";
-  none.textContent = "— no customer —";
+  none.textContent = "— select an MT5 account —";
   sel.appendChild(none);
   users.forEach((u) => {
     const opt = document.createElement("option");
     opt.value = u.id;
-    opt.textContent = `${u.email || u.name || "user #" + u.id}`;
+    opt.textContent = `${u.mt5_account || u.email || u.name || "user #" + u.id}`;
     sel.appendChild(opt);
   });
   const f = el("label", "field");
-  f.appendChild(el("span", "", "Customer (optional)"));
+  f.appendChild(el("span", "", "Customer (MT5 account)"));
   f.appendChild(sel);
   body.appendChild(f);
-  body.appendChild(el("p", "muted", "Issue a key manually — e.g. after receiving payment outside the crypto flow."));
+  body.appendChild(el("p", "muted", "One license key per MT5 account — the key is bound to that account. Only customers with an MT5 account set can receive a key."));
   openDialog({
     title: "Generate license key",
-    sub: "Valid forever; the customer pastes it into the dashboard once.",
+    sub: "Valid forever; the customer pastes it into the dashboard once, with their MT5 account number.",
     body,
     buttons: [
       {
         label: "Generate",
         kind: "primary",
         fn: async (done) => {
+          if (!sel.value) throw new Error("Select the MT5 account this key is for.");
           const res = await postJSON("/api/control/keys/generate", { user_id: sel.value ? Number(sel.value) : null });
           if (!res.ok) throw new Error(res.error);
           done();

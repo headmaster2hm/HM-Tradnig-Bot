@@ -27,6 +27,14 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _normalize_account(account: Any) -> str | None:
+    """Return a trimmed MT5 login string, or None when absent/blank."""
+    if account is None:
+        return None
+    text = str(account).strip()
+    return text if text else None
+
+
 class AdminDatabase:
     def __init__(self, path: Path | str | None = None) -> None:
         self.path = Path(path) if path else admin_db_path()
@@ -45,6 +53,7 @@ class AdminDatabase:
                 """
                 CREATE TABLE IF NOT EXISTS users (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    mt5_account TEXT UNIQUE,
                     email TEXT UNIQUE,
                     name TEXT,
                     status TEXT NOT NULL DEFAULT 'active',
@@ -53,6 +62,16 @@ class AdminDatabase:
                     updated_at TEXT NOT NULL
                 )
                 """
+            )
+            # Migrate databases created before MT5 accounts existed.
+            columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(users)").fetchall()
+            }
+            if "mt5_account" not in columns:
+                conn.execute("ALTER TABLE users ADD COLUMN mt5_account TEXT")
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_mt5_account ON users(mt5_account)"
             )
             conn.execute(
                 """
@@ -85,12 +104,23 @@ class AdminDatabase:
             conn.commit()
 
     # --- users --------------------------------------------------------
-    def create_user(self, email: str, name: str = "", notes: str = "") -> int:
+    def create_user(
+        self,
+        mt5_account: str,
+        email: str = "",
+        name: str = "",
+        notes: str = "",
+    ) -> int:
+        account = _normalize_account(mt5_account)
+        if not account:
+            raise ValueError("MT5 account number is required.")
         now = _now()
+        email = email.strip() or None
         with self._connect() as conn:
             cursor = conn.execute(
-                "INSERT INTO users (email, name, status, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (email.strip(), name.strip(), USER_ACTIVE, notes.strip(), now, now),
+                "INSERT INTO users (mt5_account, email, name, status, notes, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (account, email, name.strip(), USER_ACTIVE, notes.strip(), now, now),
             )
             conn.commit()
             return int(cursor.lastrowid)
@@ -113,6 +143,16 @@ class AdminDatabase:
             row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
         return dict(row) if row else None
 
+    def get_user_by_account(self, mt5_account: str) -> dict[str, Any] | None:
+        account = _normalize_account(mt5_account)
+        if not account:
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM users WHERE mt5_account = ?", (account,)
+            ).fetchone()
+        return dict(row) if row else None
+
     def set_user_status(self, user_id: int, status: str) -> bool:
         with self._connect() as conn:
             cursor = conn.execute(
@@ -122,11 +162,22 @@ class AdminDatabase:
             conn.commit()
             return cursor.rowcount > 0
 
-    def update_user(self, user_id: int, email: str, name: str, notes: str) -> bool:
+    def update_user(
+        self,
+        user_id: int,
+        mt5_account: str,
+        email: str = "",
+        name: str = "",
+        notes: str = "",
+    ) -> bool:
+        account = _normalize_account(mt5_account)
+        if not account:
+            raise ValueError("MT5 account number is required.")
+        email = email.strip() or None
         with self._connect() as conn:
             cursor = conn.execute(
-                "UPDATE users SET email = ?, name = ?, notes = ?, updated_at = ? WHERE id = ?",
-                (email.strip(), name.strip(), notes.strip(), _now(), user_id),
+                "UPDATE users SET mt5_account = ?, email = ?, name = ?, notes = ?, updated_at = ? WHERE id = ?",
+                (account, email, name.strip(), notes.strip(), _now(), user_id),
             )
             conn.commit()
             return cursor.rowcount > 0
@@ -160,7 +211,7 @@ class AdminDatabase:
 
     def list_payments(self, status: str | None = None) -> list[dict[str, Any]]:
         query = """
-            SELECT p.*, u.email AS user_email, u.name AS user_name
+            SELECT p.*, u.mt5_account AS user_account, u.email AS user_email, u.name AS user_name
             FROM payments p LEFT JOIN users u ON u.id = p.user_id
         """
         params: tuple[Any, ...] = ()
@@ -176,7 +227,7 @@ class AdminDatabase:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT p.*, u.email AS user_email, u.name AS user_name
+                SELECT p.*, u.mt5_account AS user_account, u.email AS user_email, u.name AS user_name
                 FROM payments p LEFT JOIN users u ON u.id = p.user_id
                 WHERE p.id = ?
                 """,
@@ -229,7 +280,7 @@ class AdminDatabase:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT k.*, u.email AS user_email, u.name AS user_name
+                SELECT k.*, u.mt5_account AS user_account, u.email AS user_email, u.name AS user_name
                 FROM license_keys k LEFT JOIN users u ON u.id = k.user_id
                 ORDER BY k.issued_at DESC
                 """

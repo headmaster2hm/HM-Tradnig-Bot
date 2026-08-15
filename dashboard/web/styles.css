@@ -1480,6 +1480,204 @@ table.tbl tr:last-child td {
   color: var(--up);
 }
 
+/* --- payment modal --------------------------------------------------- */
+.payment-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background:
+    radial-gradient(1px, var(--line-2) 1px, transparent 1px),
+    var(--paper);
+  background-size: 22px 22px;
+  overflow-y: auto;
+}
+
+.payment-modal[hidden] {
+  display: none;
+}
+
+.modal-content {
+  width: 100%;
+  max-width: 430px;
+  position: relative;
+}
+
+.modal-close {
+  position: absolute;
+  top: -40px;
+  right: 0;
+  width: 32px;
+  height: 32px;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 28px;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.12s ease;
+}
+
+.modal-close:hover {
+  color: var(--ink);
+}
+
+.payment-card {
+  width: 100%;
+  background: var(--card);
+  border: 1px solid var(--line);
+  padding: 36px 34px 30px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.payment-logo {
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--line);
+  font-size: 18px;
+  margin-bottom: 20px;
+}
+
+.payment-title {
+  font-size: 26px;
+  font-weight: 700;
+  font-style: italic;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.payment-sub {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 22px;
+}
+
+.payment-price {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.payment-price .amount {
+  font-size: 44px;
+  font-weight: 700;
+  font-style: italic;
+  letter-spacing: 0.5px;
+  color: var(--accent);
+  line-height: 1;
+}
+
+.payment-price .unit {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: var(--muted);
+}
+
+.payment-desc {
+  font-size: 13px;
+  color: var(--ink-2);
+  line-height: 1.6;
+  margin-bottom: 20px;
+  max-width: 330px;
+}
+
+.payment-pay {
+  width: 100%;
+  justify-content: center;
+  padding: 14px 18px;
+  font-size: 12px;
+}
+
+.payment-pay.hidden,
+.payment-alternate.hidden {
+  display: none;
+}
+
+.payment-alternate {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+  margin-top: 12px;
+}
+
+.payment-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin: 22px 0 14px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.payment-divider::before,
+.payment-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+
+.payment-crypto {
+  width: 100%;
+  text-align: left;
+}
+
+.payment-crypto[hidden] {
+  display: none;
+}
+
+.crypto-sub {
+  font-size: 13px;
+  color: var(--ink-2);
+  line-height: 1.6;
+  margin-bottom: 16px;
+}
+
+.crypto-sub em {
+  font-style: italic;
+  color: var(--ink);
+}
+
+/* --- text link ------------------------------------------------------ */
+.text-link {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 600;
+  transition: opacity 0.12s ease;
+  cursor: pointer;
+}
+
+.text-link:hover {
+  opacity: 0.8;
+}
+
+.license-link-row {
+  font-size: 12px;
+  color: var(--ink-2);
+  margin-top: 18px;
+  margin-bottom: 8px;
+}
+
 /* --- misc ----------------------------------------------------------- */
 .section-title {
   padding: 14px 20px 6px;

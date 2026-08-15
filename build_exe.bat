@@ -15,13 +15,7 @@ if exist build rmdir /s /q build
 if exist "dist\HMBotTrader" rmdir /s /q "dist\HMBotTrader"
 if exist "dist\HMBotTrader.zip" del /f /q "dist\HMBotTrader.zip"
 
-python -m PyInstaller --noconfirm --clean ^
-  --distpath dist --workpath build ^
-  --name HMBotTrader ^
-  --add-data "config\settings.dist.json;config" ^
-  --add-data "dashboard\web;dashboard\web" ^
-  --collect-all MetaTrader5 ^
-  main.py
+python -m PyInstaller --noconfirm --clean --distpath dist --workpath build hmbot_trader.spec
 if errorlevel 1 (
   echo BUILD FAILED
   exit /b 1

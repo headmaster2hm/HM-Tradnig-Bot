@@ -1,4 +1,8 @@
-"""HM Bot Trader — entry point."""
+"""HM Bot Trader — entry point.
+
+Default mode opens the dashboard in a native Windows window (no browser).
+Pass ``--browser`` to fall back to the classic browser-tab behaviour.
+"""
 
 from __future__ import annotations
 
@@ -28,13 +32,28 @@ def main() -> None:
         default=0,
         help="Port to listen on (0 = pick a random free port).",
     )
+    parser.add_argument(
+        "--browser",
+        action="store_true",
+        help="Open the dashboard in your default browser instead of a native window.",
+    )
     args = parser.parse_args()
 
     ensure_user_settings()
     setup_logging()
-    from dashboard import run_app
+    from mailadmin import start_watcher
 
-    run_app(host=args.host, port=args.port)
+    start_watcher()
+
+    if args.browser:
+        from dashboard import run_app
+
+        run_app(host=args.host, port=args.port)
+        return
+
+    from desktop import run_desktop
+
+    run_desktop(host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

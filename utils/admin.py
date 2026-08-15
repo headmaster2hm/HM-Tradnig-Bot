@@ -9,6 +9,8 @@ Secrets are kept in ``admin.json`` under the app data folder:
 - ``password_hash`` — PBKDF2-HMAC-SHA256 hash of the owner password
 - ``path_token``   — the random segment of the control URL (``/<token>``)
 - ``signing_key``  — key used to sign the session cookie
+- ``mail_passphrase`` — rotating access word for the "email yourself a
+  fresh admin URL" feature (see ``mailadmin``)
 
 First-time setup (from the project folder):
 
@@ -51,6 +53,7 @@ _FORBIDDEN_SEGMENTS = ("admin", "control", "manage", "panel", "auth", "login")
 
 _lock = threading.Lock()
 _failures: dict[str, deque[float]] = {}
+_config_lock = threading.Lock()
 
 
 # --- config store ------------------------------------------------------
@@ -62,6 +65,7 @@ def _default_config() -> dict[str, Any]:
         "pbkdf2_iterations": PBKDF2_ITERATIONS,
         "path_token": "",
         "signing_key": "",
+        "mail_passphrase": "",
     }
 
 
@@ -111,6 +115,32 @@ def _new_path_token() -> str:
 def get_path_token() -> str:
     """The secret segment that gates the control panel (``/<token>``)."""
     return ensure_config()["path_token"]
+
+
+def rotate_path_token() -> str:
+    """Replace the control path token with a fresh random one.
+
+    The old URL immediately stops working. Returns the new token.
+    """
+    with _config_lock:
+        data = ensure_config()
+        token = _new_path_token()
+        data["path_token"] = token
+        save_config(data)
+        return token
+
+
+def get_mail_passphrase() -> str:
+    """The current rotating access word for the email-admin feature."""
+    return load_config().get("mail_passphrase") or ""
+
+
+def set_mail_passphrase(phrase: str) -> None:
+    """Store the next rotating access word for the email-admin feature."""
+    with _config_lock:
+        data = ensure_config()
+        data["mail_passphrase"] = phrase
+        save_config(data)
 
 
 # --- password ----------------------------------------------------------
@@ -260,11 +290,17 @@ def _cmd_url() -> int:
 
 
 def _cmd_status() -> int:
+    data = load_config()
     if is_configured():
-        print(f"secured       : yes (user: {load_config().get('username') or '?'})")
+        print(f"secured       : yes (user: {data.get('username') or '?'})")
     else:
         print("secured       : NO — run  python -m utils.admin set-password")
     print(f"control path  : /{get_path_token()}")
+    phrase = data.get("mail_passphrase")
+    if phrase:
+        print(f"mail access word : {phrase}  (email yourself this word to get a NEW link)")
+    else:
+        print("mail access word : none set — email yourself anything to bootstrap")
     return 0
 
 

@@ -5,7 +5,7 @@
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
-Write-Host "==> Installing build dependency (pyinstaller)..."
+Write-Host "==> Ensuring build tools (pyinstaller)..."
 python -m pip install -q "pyinstaller>=6.0"
 if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
 
@@ -17,13 +17,7 @@ Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $workPath "
 Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $distPath "HMBotTrader.zip")
 
 Write-Host "==> Building HMBotTrader.exe (this can take a few minutes)..."
-python -m PyInstaller --noconfirm --clean `
-  --distpath $distPath --workpath $workPath `
-  --name HMBotTrader `
-  --add-data "config\settings.dist.json;config" `
-  --add-data "dashboard\web;dashboard\web" `
-  --collect-all MetaTrader5 `
-  main.py
+python -m PyInstaller --noconfirm --clean --distpath $distPath --workpath $workPath hmbot_trader.spec
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed with exit code $LASTEXITCODE" }
 
 $distDir = Join-Path $distPath "HMBotTrader"

@@ -60,7 +60,7 @@ class TestKeyValidation:
 class TestActivation:
     def test_activate_then_activated(self, store: Path) -> None:
         key = license_util.generate_key()
-        ok, err = license_util.activate(key)
+        ok, err = license_util.activate(key, mt5_account="50014")
         assert ok is True
         assert err == ""
         assert license_util.is_activated() is True
@@ -68,17 +68,20 @@ class TestActivation:
 
     def test_activation_persists_across_reload(self, store: Path) -> None:
         key = license_util.generate_key()
-        license_util.activate(key)
+        license_util.activate(key, mt5_account="50014")
         record = license_util._read_license()
         assert license_util.validate_key(record["key"]) is True
         assert "activated_at" in record
+        assert record["mt5_account"] == "50014"
 
     def test_status_reports_activated(self, store: Path) -> None:
         key = license_util.generate_key()
-        license_util.activate(key)
+        license_util.activate(key, mt5_account="50014")
         status = license_util.status()
         assert status["activated"] is True
         assert status["key_hint"].startswith("HM-")
+        assert status["mt5_account"] == "50014"
+        assert status["account_bound"] is True
         assert status["price"] == 20.0
         assert status["currency"] == "USD"
 
@@ -87,16 +90,17 @@ class TestActivation:
         status = license_util.status()
         assert status["activated"] is False
         assert status["key_hint"] == ""
+        assert status["mt5_account"] is None
 
     def test_invalid_key_rejected(self, store: Path) -> None:
-        ok, err = license_util.activate("NOT-A-REAL-KEY")
+        ok, err = license_util.activate("NOT-A-REAL-KEY", mt5_account="50014")
         assert ok is False
         assert err
         assert license_util.is_activated() is False
 
     def test_empty_key_rejected(self, store: Path) -> None:
-        assert license_util.activate("") == (False, "Please paste your license key.")
-        assert license_util.activate("   ") == (False, "Please paste your license key.")
+        assert license_util.activate("", mt5_account="50014") == (False, "Please paste your license key.")
+        assert license_util.activate("   ", mt5_account="50014") == (False, "Please paste your license key.")
 
     def test_env_var_activates_without_file(self, store: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         key = license_util.generate_key()
@@ -107,3 +111,70 @@ class TestActivation:
     def test_invalid_env_var_not_activated(self, store: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("HM_LICENSE_KEY", "garbage")
         assert license_util.is_activated() is False
+
+
+class TestAccountBinding:
+    def test_bound_account_returned(self, store: Path) -> None:
+        key = license_util.generate_key()
+        license_util.activate(key, mt5_account="50014")
+        assert license_util.bound_mt5_account() == "50014"
+
+    def test_legacy_unbound_license_has_no_account(self, store: Path) -> None:
+        key = license_util.generate_key()
+        license_util.activate(key)
+        assert license_util.bound_mt5_account() is None
+
+    def test_same_key_different_account_rejected(self, store: Path) -> None:
+        key = license_util.generate_key()
+        assert license_util.activate(key, mt5_account="50014")[0] is True
+        ok, err = license_util.activate(key, mt5_account="60001")
+        assert ok is False
+        assert "already bound" in err.lower()
+        assert "50014" in err
+        assert license_util.bound_mt5_account() == "50014"
+
+    def test_same_key_same_account_allowed(self, store: Path) -> None:
+        key = license_util.generate_key()
+        assert license_util.activate(key, mt5_account="50014")[0] is True
+        ok, err = license_util.activate(key, mt5_account="50014")
+        assert ok is True
+        assert err == ""
+        assert license_util.bound_mt5_account() == "50014"
+
+    def test_new_key_binds_to_new_account(self, store: Path) -> None:
+        k1 = license_util.generate_key()
+        assert license_util.activate(k1, mt5_account="50014")[0] is True
+        k2 = license_util.generate_key()
+        assert license_util.activate(k2, mt5_account="60001")[0] is True
+        assert license_util.bound_mt5_account() == "60001"
+
+    def test_check_account_matches(self, store: Path) -> None:
+        license_util.activate(license_util.generate_key(), mt5_account="50014")
+        ok, err = license_util.check_account("50014")
+        assert ok is True
+        assert err == ""
+
+    def test_check_account_mismatch(self, store: Path) -> None:
+        license_util.activate(license_util.generate_key(), mt5_account="50014")
+        ok, err = license_util.check_account("60001")
+        assert ok is False
+        assert "50014" in err
+        assert "60001" in err
+
+    def test_check_account_allows_sim(self, store: Path) -> None:
+        license_util.activate(license_util.generate_key(), mt5_account="50014")
+        ok, err = license_util.check_account("SIM")
+        assert ok is True
+        assert err == ""
+
+    def test_check_account_allows_unbound(self, store: Path) -> None:
+        license_util.activate(license_util.generate_key())
+        ok, err = license_util.check_account("12345")
+        assert ok is True
+        assert err == ""
+
+    def test_check_account_allows_unknown_login(self, store: Path) -> None:
+        license_util.activate(license_util.generate_key(), mt5_account="50014")
+        ok, err = license_util.check_account(None)
+        assert ok is True
+        assert err == ""

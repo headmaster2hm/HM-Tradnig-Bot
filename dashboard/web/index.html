@@ -14,48 +14,13 @@
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
+  <!-- License activation gate - minimal key input only -->
   <div class="license-overlay" id="license-overlay" hidden>
     <div class="license-card">
       <div class="rail-logo license-logo">HM<span class="c">▌</span></div>
       <h1 class="license-title">Activate your bot</h1>
-      <p class="license-sub">One-time fee · lifetime license key · no subscription</p>
-      <div class="license-price"><span class="amount" id="license-price">$20</span><span class="unit" id="license-currency">USD</span></div>
-      <p class="license-desc">
-        Pay once to activate the bot. Your license key works forever — on this
-        machine and after reinstalling. No monthly fees.
-      </p>
-      <a class="btn primary license-pay" id="license-pay" href="#" target="_blank" rel="noopener">
-        Pay and get your license key
-      </a>
-      <p class="license-alternate" id="license-alternate">
-        After payment, the seller sends you a license key by email.
-      </p>
-      <div class="license-divider"><span>or pay in crypto</span></div>
-      <div class="license-crypto" id="license-crypto" hidden>
-        <p class="license-crypto-sub">
-          Send the amount above to one of these deposit addresses, then press
-          <em>Check payment</em>. The bot is activated once the seller confirms the funds.
-        </p>
-        <div class="crypto-row">
-          <span class="crypto-badge">BTC</span>
-          <div class="crypto-body">
-            <div class="crypto-addr" id="pay-btc-addr">—</div>
-            <button class="crypto-copy" data-copy="pay-btc-addr">Copy</button>
-          </div>
-        </div>
-        <div class="crypto-row">
-          <span class="crypto-badge">USDT<small>TRC-20</small></span>
-          <div class="crypto-body">
-            <div class="crypto-addr" id="pay-usdt-addr">—</div>
-            <button class="crypto-copy" data-copy="pay-usdt-addr">Copy</button>
-          </div>
-        </div>
-        <div class="crypto-tools">
-          <button class="btn ghost crypto-check" id="crypto-check">Check payment</button>
-          <span class="crypto-status" id="crypto-status"></span>
-        </div>
-      </div>
-      <div class="license-divider"><span>or activate with an existing key</span></div>
+      <p class="license-sub">Enter your license key below</p>
+      
       <div class="license-input-row">
         <input
           id="license-key"
@@ -67,10 +32,86 @@
         />
         <button class="btn primary" id="license-activate">Activate</button>
       </div>
+      <div class="license-input-row">
+        <input
+          id="license-account"
+          type="text"
+          inputmode="numeric"
+          placeholder="Your MT5 account number (login)"
+          autocomplete="off"
+          spellcheck="false"
+        />
+      </div>
       <div class="license-error" id="license-error"></div>
-      <p class="license-note">
-        Already activated on another PC? Re-enter the same key here — no second payment.
+      
+      <p class="license-link-row">
+        Don't have a key yet? <a href="#" id="open-payment-modal" class="text-link">Get your license</a>
       </p>
+      <p class="license-note">
+        Each license key is bound to the MT5 account you enter here. Already
+        activated on another PC? Re-enter the same key and account — no second payment.
+      </p>
+    </div>
+  </div>
+
+  <!-- Payment modal - all pricing and payment options -->
+  <div class="payment-modal" id="payment-modal" hidden>
+    <div class="modal-content">
+      <button class="modal-close" id="close-payment-modal" aria-label="Close">×</button>
+      
+      <div class="payment-card">
+        <div class="rail-logo payment-logo">HM<span class="c">▌</span></div>
+        <h2 class="payment-title">Get Your License Key</h2>
+        <p class="payment-sub">One-time fee · lifetime license key · no subscription</p>
+        
+        <div class="payment-price">
+          <span class="amount" id="license-price">$20</span>
+          <span class="unit" id="license-currency">USD</span>
+        </div>
+        
+        <p class="payment-desc">
+          Pay once to activate the bot. Your license key works forever — on this
+          machine and after reinstalling. No monthly fees.
+        </p>
+        
+        <a class="btn primary payment-pay" id="license-pay" href="#" target="_blank" rel="noopener">
+          Pay and get your license key
+        </a>
+        
+        <p class="payment-alternate" id="license-alternate">
+          After payment, send your receipt to
+          <a href="https://t.me/flinchrez" target="_blank" rel="noopener">@flinchrez</a>
+          on Telegram and the seller will send you your license key.
+        </p>
+        
+        <div class="payment-divider"><span>or pay in crypto</span></div>
+        
+        <div class="payment-crypto" id="license-crypto" hidden>
+          <div class="crypto-row">
+            <span class="crypto-badge">BTC</span>
+            <div class="crypto-body">
+              <div class="crypto-addr" id="pay-btc-addr">—</div>
+              <button class="crypto-copy" data-copy="pay-btc-addr">Copy</button>
+            </div>
+          </div>
+          <div class="crypto-row">
+            <span class="crypto-badge">USDT<small>TRC-20</small></span>
+            <div class="crypto-body">
+              <div class="crypto-addr" id="pay-usdt-addr">—</div>
+              <button class="crypto-copy" data-copy="pay-usdt-addr">Copy</button>
+            </div>
+          </div>
+          <p class="crypto-sub">
+            Send the amount above to one of these deposit addresses, then send your
+            payment receipt to <a href="https://t.me/flinchrez" target="_blank" rel="noopener">@flinchrez</a>
+            on Telegram. The bot is activated once the seller confirms the funds.
+          </p>
+          <div class="crypto-tools">
+            <button class="btn ghost crypto-check" id="crypto-check">Check payment</button>
+            <span class="crypto-status" id="crypto-status"></span>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 

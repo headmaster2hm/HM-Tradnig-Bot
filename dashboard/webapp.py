@@ -101,12 +101,29 @@ class Engine:
         self.executor = TradeExecutor(config)
         self._snapshot: Any = None
         self._lock = threading.Lock()
+        self._license_error: str = ""
         self._queue: queue.Queue[tuple] = queue.Queue()
         self._thread = threading.Thread(target=self._loop, daemon=True, name="hm-engine")
         self._thread.start()
 
+    # -- license <-> MT5 account binding --------------------------------
+    def _license_account_error(self) -> str:
+        """Reason the connected MT5 account is not licensed, or "" if OK."""
+        if not license_util.is_activated():
+            return ""
+        try:
+            login = self.executor.client.account_info().get("login")
+        except Exception:  # noqa: BLE001
+            return ""
+        ok, error = license_util.check_account(login)
+        return "" if ok else error
+
+    def license_account_error(self) -> str:
+        return self._license_error
+
     # -- background loop -------------------------------------------------
     def _loop(self) -> None:
+        ticks = 0
         while True:
             self._drain_commands()
             try:
@@ -114,6 +131,24 @@ class Engine:
             except Exception:  # noqa: BLE001
                 logger.exception("engine tick failed")
                 snapshot = None
+            ticks += 1
+            if ticks % 15 == 0:
+                try:
+                    self._license_error = self._license_account_error()
+                except Exception:  # noqa: BLE001
+                    self._license_error = ""
+            if (
+                self._license_error
+                and snapshot is not None
+                and getattr(snapshot, "status", "") == "RUNNING"
+            ):
+                logger.warning(
+                    "Stopped bot — license/MT5 account mismatch: %s", self._license_error
+                )
+                try:
+                    self.executor.stop()
+                except Exception:  # noqa: BLE001
+                    pass
             with self._lock:
                 self._snapshot = snapshot
             interval = max(0.3, float(self.executor.config.poll_interval_ms) / 1000.0)
@@ -142,7 +177,17 @@ class Engine:
                     f"{license_util.CURRENCY} {license_util.PRICE:.0f} fee and enter your "
                     "license key to activate the bot."
                 )
-            return ex.start()
+            ok = ex.start()
+            if not ok:
+                return False
+            mismatch = self._license_account_error()
+            if mismatch:
+                try:
+                    ex.stop()
+                except Exception:  # noqa: BLE001
+                    pass
+                raise ValueError(mismatch)
+            return True
         if name == "stop":
             ex.stop()
             return True
@@ -374,6 +419,8 @@ def make_handler(engine: Engine) -> type[BaseHTTPRequestHandler]:
                 data["mt5"]["password"] = KEEP
             if cfg.telegram.bot_token or os.environ.get("HM_TELEGRAM_BOT_TOKEN"):
                 data["telegram"]["bot_token"] = KEEP
+            if cfg.mt5_bridge.token or os.environ.get("HM_BRIDGE_TOKEN"):
+                data["mt5_bridge"]["token"] = KEEP
             return {"config": data, "notices": config_security_notices(cfg)}
 
         def _save_settings(self, payload: dict) -> None:
@@ -603,11 +650,25 @@ def make_handler(engine: Engine) -> type[BaseHTTPRequestHandler]:
 
             # users
             if path == "/api/control/users":
-                email = str(body.get("email", "") or "").strip()
-                if not email:
-                    self._send_json({"ok": False, "error": "Email is required."}, 400)
+                mt5_account = str(body.get("mt5_account", "") or "").strip()
+                if not mt5_account:
+                    self._send_json({"ok": False, "error": "MT5 account number is required."}, 400)
                     return
-                user_id = db.create_user(email, str(body.get("name", "") or ""), str(body.get("notes", "") or ""))
+                if db.get_user_by_account(mt5_account):
+                    self._send_json(
+                        {"ok": False, "error": f"MT5 account {mt5_account} already exists."}, 400
+                    )
+                    return
+                try:
+                    user_id = db.create_user(
+                        mt5_account,
+                        str(body.get("email", "") or ""),
+                        str(body.get("name", "") or ""),
+                        str(body.get("notes", "") or ""),
+                    )
+                except ValueError as exc:
+                    self._send_json({"ok": False, "error": str(exc)}, 400)
+                    return
                 self._send_json({"ok": True, "id": user_id})
                 return
             if path == "/api/control/users/status":
@@ -619,7 +680,27 @@ def make_handler(engine: Engine) -> type[BaseHTTPRequestHandler]:
                 self._send_json({"ok": True})
                 return
             if path == "/api/control/users/update":
-                db.update_user(int(body.get("id", 0)), str(body.get("email", "") or ""), str(body.get("name", "") or ""), str(body.get("notes", "") or ""))
+                mt5_account = str(body.get("mt5_account", "") or "").strip()
+                if not mt5_account:
+                    self._send_json({"ok": False, "error": "MT5 account number is required."}, 400)
+                    return
+                existing = db.get_user_by_account(mt5_account)
+                if existing and existing["id"] != int(body.get("id", 0)):
+                    self._send_json(
+                        {"ok": False, "error": f"MT5 account {mt5_account} already exists."}, 400
+                    )
+                    return
+                try:
+                    db.update_user(
+                        int(body.get("id", 0)),
+                        mt5_account,
+                        str(body.get("email", "") or ""),
+                        str(body.get("name", "") or ""),
+                        str(body.get("notes", "") or ""),
+                    )
+                except ValueError as exc:
+                    self._send_json({"ok": False, "error": str(exc)}, 400)
+                    return
                 self._send_json({"ok": True})
                 return
             if path == "/api/control/users/delete":
@@ -661,9 +742,23 @@ def make_handler(engine: Engine) -> type[BaseHTTPRequestHandler]:
             # keys
             if path == "/api/control/keys/generate":
                 user_id = body.get("user_id")
+                if not user_id:
+                    self._send_json(
+                        {"ok": False, "error": "Select the MT5 account this key is for."}, 400
+                    )
+                    return
+                user = db.get_user(int(user_id))
+                if not user:
+                    self._send_json({"ok": False, "error": "Customer not found."}, 404)
+                    return
+                if not str(user.get("mt5_account") or "").strip():
+                    self._send_json(
+                        {"ok": False, "error": "Set the customer's MT5 account first (one key per account)."}, 400
+                    )
+                    return
                 key = license_util.generate_key()
-                db.add_key(key, int(user_id) if user_id else None)
-                self._send_json({"ok": True, "key": key})
+                db.add_key(key, int(user_id))
+                self._send_json({"ok": True, "key": key, "mt5_account": user.get("mt5_account")})
                 return
             if path == "/api/control/keys/revoke":
                 db.set_key_status(str(body.get("key", "") or ""), "revoked")
@@ -736,10 +831,17 @@ def make_handler(engine: Engine) -> type[BaseHTTPRequestHandler]:
                 self._send_json({"ok": False, "error": "Payment not found."}, 404)
                 return
             txid = str(body.get("txid", "") or "")
+            user_id = payment.get("user_id")
+            if user_id:
+                user = db.get_user(int(user_id))
+                if not str(user.get("mt5_account") or "").strip():
+                    self._send_json(
+                        {"ok": False, "error": "Set the customer's MT5 account before confirming payment (one key per account)."}, 400
+                    )
+                    return
             if not db.set_payment_status(payment_id, "paid", txid=txid):
                 self._send_json({"ok": False, "error": "Could not update payment."}, 500)
                 return
-            user_id = payment.get("user_id")
             key = license_util.generate_key()
             db.add_key(key, user_id)
             if user_id:
@@ -768,8 +870,16 @@ def make_handler(engine: Engine) -> type[BaseHTTPRequestHandler]:
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
             path = parsed.path
+            if path == "/bridge/ws" and self.headers.get("Upgrade", "").lower() == "websocket":
+                from bridge.manager import get_manager
+                from bridge.ws import serve as serve_bridge
+
+                serve_bridge(self, get_manager())
+                return
             if path == "/api/state":
-                self._send_json(serialize_snapshot(engine.snapshot(), engine.config, engine.executor))
+                payload = serialize_snapshot(engine.snapshot(), engine.config, engine.executor)
+                payload["license_account_error"] = engine.license_account_error()
+                self._send_json(payload)
             elif path == "/api/license/status":
                 self._send_json(license_util.status())
             elif path == "/api/payment/addresses":
@@ -835,7 +945,13 @@ def make_handler(engine: Engine) -> type[BaseHTTPRequestHandler]:
                     self._send_json({"ok": False, "error": str(exc)}, 400)
             elif path == "/api/license/activate":
                 key = str(body.get("key", "") or "").strip()
-                ok, error = license_util.activate(key)
+                mt5_account = str(body.get("mt5_account", "") or "").strip()
+                if not mt5_account:
+                    self._send_json(
+                        {"ok": False, "error": "Enter the MT5 account number this license is for."}, 400
+                    )
+                    return
+                ok, error = license_util.activate(key, mt5_account)
                 if not ok:
                     self._send_json({"ok": False, "error": error}, 400)
                 else:
@@ -866,10 +982,20 @@ def make_handler(engine: Engine) -> type[BaseHTTPRequestHandler]:
     return DashboardHandler
 
 
-def run_app(host: str = "127.0.0.1", port: int = 0) -> None:
+def create_server(host: str = "127.0.0.1", port: int = 0) -> tuple[ThreadingHTTPServer, Engine]:
+    """Create (but do not serve) the dashboard HTTP server and its engine.
+
+    Used by both the browser mode (``run_app``) and the native desktop
+    window (``desktop.py``), which runs the server on a background thread.
+    """
     config = load_config()
     engine = Engine(config)
     server = ThreadingHTTPServer((host, port), make_handler(engine))
+    return server, engine
+
+
+def run_app(host: str = "127.0.0.1", port: int = 0) -> None:
+    server, engine = create_server(host, port)
     bound_port = int(server.server_address[1])
     local_url = f"http://127.0.0.1:{bound_port}"
     logger.info("HM Bot Trader dashboard ready at %s", local_url)

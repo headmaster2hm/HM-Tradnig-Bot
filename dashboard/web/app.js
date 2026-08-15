@@ -218,8 +218,9 @@ function renderTopbar(s) {
     const dec = last.c >= 1000 ? 2 : last.c >= 10 ? 3 : 5;
     $("sl-last").textContent = last.c.toFixed(dec);
   }
-  const msg = s.halted ? (s.risk_reason || "Halted") : "";
+  const msg = s.halted ? (s.risk_reason || "Halted") : s.license_account_error || "";
   $("sl-msg").textContent = msg;
+  $("sl-msg").className = s.license_account_error ? "grow warn" : "grow";
 }
 
 /* ------------------------------------------------------------------ */
@@ -635,6 +636,9 @@ const SETTINGS_GROUPS = [
       { key: "mt5.server", label: "Server", type: "text" },
       { key: "mt5.password", label: "Password (kept off disk by default)", type: "password" },
       { key: "mt5.remember_password", label: "Remember password on disk", type: "check" },
+      { key: "mt5_bridge.enabled", label: "Connect through HM Bridge (desktop MT5)", type: "check" },
+      { key: "mt5_bridge.url", label: "Bridge URL", type: "text" },
+      { key: "mt5_bridge.token", label: "Bridge token (prefer HM_BRIDGE_TOKEN env)", type: "password" },
     ],
   },
   {
@@ -1034,21 +1038,27 @@ async function checkPayment() {
 
 async function tryActivate() {
   const key = $("license-key").value.trim();
+  const account = $("license-account").value.trim();
   const errorBox = $("license-error");
   errorBox.textContent = "";
   if (!key) {
     errorBox.textContent = "Enter your license key first.";
     return;
   }
+  if (!account) {
+    errorBox.textContent = "Enter the MT5 account number this license is for.";
+    return;
+  }
   const btn = $("license-activate");
   btn.disabled = true;
   btn.textContent = "Activating…";
   try {
-    const res = await postJSON("/api/license/activate", { key });
+    const res = await postJSON("/api/license/activate", { key, mt5_account: account });
     license = res;
     $("license-key").value = "";
+    $("license-account").value = "";
     $("license-overlay").hidden = true;
-    toast("Bot activated — welcome!", "success");
+    toast("Bot activated for MT5 account " + (res.mt5_account || account), "success");
     poll();
   } catch (err) {
     errorBox.textContent = err.message || "Activation failed";
@@ -1056,6 +1066,16 @@ async function tryActivate() {
     btn.disabled = false;
     btn.textContent = "Activate";
   }
+}
+
+async function prefillAccount() {
+  try {
+    const snap = await api("/api/state");
+    const login = snap.account && snap.account.login;
+    if (login && login !== "SIM" && $("license-account").value === "") {
+      $("license-account").value = login;
+    }
+  } catch (e) {}
 }
 
 $("license-activate").addEventListener("click", tryActivate);
@@ -1069,14 +1089,39 @@ document.querySelectorAll(".crypto-copy").forEach((b) => {
   b.addEventListener("click", copyAddress);
 });
 
+const openPaymentModal = $("open-payment-modal");
+const paymentModal = $("payment-modal");
+const closePaymentModal = $("close-payment-modal");
+if (openPaymentModal) {
+  openPaymentModal.addEventListener("click", (e) => {
+    e.preventDefault();
+    if (paymentModal) paymentModal.hidden = false;
+  });
+}
+if (closePaymentModal) {
+  closePaymentModal.addEventListener("click", () => {
+    if (paymentModal) paymentModal.hidden = true;
+  });
+}
+if (paymentModal) {
+  paymentModal.addEventListener("click", (e) => {
+    if (e.target === paymentModal) paymentModal.hidden = true;
+  });
+}
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && paymentModal && !paymentModal.hidden) paymentModal.hidden = true;
+});
+
 /* initial */
 applyTheme(readTheme(), false);
 checkLicense().then((lic) => {
   if (!lic.activated) {
     showLicenseGate();
+    prefillAccount();
     return;
   }
   poll();
 }).catch(() => {
   showLicenseGate();
+  prefillAccount();
 });

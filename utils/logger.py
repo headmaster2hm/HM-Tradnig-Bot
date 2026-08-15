@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -35,9 +36,11 @@ def setup_logging(level: int = logging.INFO) -> None:
     file_handler.setFormatter(formatter)
     root.addHandler(file_handler)
 
-    console = logging.StreamHandler()
-    console.setFormatter(formatter)
-    root.addHandler(console)
+    # Windowed exes have no console - skip the StreamHandler there.
+    if sys.stderr is not None:
+        console = logging.StreamHandler()
+        console.setFormatter(formatter)
+        root.addHandler(console)
 
     _CONFIGURED = True
 
