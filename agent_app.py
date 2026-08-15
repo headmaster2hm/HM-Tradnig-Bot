@@ -114,14 +114,21 @@ def _autostart_set(enabled: bool) -> None:
 
 # ---------------------------------------------------------------- logging
 class TextHandler(logging.Handler):
-    def __init__(self, widget) -> None:  # type: ignore[no-untyped-def]
+    """Log handler that forwards records to the UI thread via the task queue.
+
+    Tkinter widgets must only be touched from the main thread. Background
+    threads (agent, telemetry) therefore just enqueue the formatted record;
+    ``_poll_status`` drains the queue and appends to the Text widget.
+    """
+
+    def __init__(self, widget, queue: "queue.Queue") -> None:  # type: ignore[no-untyped-def]
         super().__init__()
         self.widget = widget
+        self.queue = queue
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
-            self.widget.insert("end", self.format(record) + "\n")
-            self.widget.see("end")
+            self.queue.put(("log", self.format(record) + "\n"))
         except Exception:  # noqa: BLE001
             pass
 
@@ -326,7 +333,7 @@ class AgentApp:
         self._setup_logging()
 
     def _setup_logging(self) -> None:
-        handler = TextHandler(self.log_text)
+        handler = TextHandler(self.log_text, self._tasks)
         handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s", "%H:%M:%S"))
         logging.getLogger("agent").addHandler(handler)
         logging.getLogger("agent").setLevel(logging.INFO)
@@ -436,6 +443,9 @@ class AgentApp:
                     self._on_detect_done(task[1])
                 elif kind == "start_after_detect":
                     self._on_start_after_detect(task[1], task[2])
+                elif kind == "log":
+                    self.log_text.insert("end", task[1])
+                    self.log_text.see("end")
         except queue.Empty:
             pass
         try:
