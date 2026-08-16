@@ -53,3 +53,4 @@ dist/
 
 # Installer binaries (built on Windows, uploaded separately)
 assets/*.exe
+assets/*.zip

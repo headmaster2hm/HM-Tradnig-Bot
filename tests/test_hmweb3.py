@@ -21,6 +21,7 @@ from utils import hmweb3  # noqa: E402
 def _isolate(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("HM_WEB3_API_KEY", raising=False)
     monkeypatch.delenv("HM_WEB3_BASE_URL", raising=False)
+    monkeypatch.delenv("HM_SELLER_URL", raising=False)
     yield
     hmweb3.clear_address_cache()
 
@@ -131,6 +132,7 @@ class TestGenerateWallet:
 
 class TestCheckBalance:
     def test_ok(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("HM_WEB3_API_KEY", "test-key")
         monkeypatch.setattr(
             hmweb3,
             "_urlopen",
@@ -153,6 +155,7 @@ class TestCheckBalance:
 
 class TestPaymentAddresses:
     def test_generates_btc_and_usdt(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("HM_WEB3_API_KEY", "test-key")
         seen: list[str] = []
         monkeypatch.setattr(hmweb3, "generate_wallet", lambda chain: (seen.append(chain), _btc_wallet() if chain == "btc" else _usdt_wallet())[1])
 
@@ -164,6 +167,7 @@ class TestPaymentAddresses:
         assert payload["btc"]["variants"]["legacy_p2pkh"] == "1LegacyAddress"
 
     def test_cached_until_ttl(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("HM_WEB3_API_KEY", "test-key")
         count = {"n": 0}
 
         def fake_generate(chain: str) -> dict:
@@ -177,6 +181,7 @@ class TestPaymentAddresses:
         assert count["n"] == 2  # one generate per chain, only on first call
 
     def test_force_regenerates(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("HM_WEB3_API_KEY", "test-key")
         count = {"n": 0}
 
         def fake_generate(chain: str) -> dict:
@@ -200,3 +205,72 @@ class TestPaymentAddresses:
         address, variants = hmweb3._extract_tron(usdt)
         assert address == "TMainTronAddress"
         assert variants == {}
+
+
+class TestSellerProxy:
+    """Customer builds have no API key: payment calls go to the seller."""
+
+    def test_addresses_proxied_to_seller_when_no_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls: list[tuple[str, str]] = []
+
+        def fake(req, timeout=None):
+            calls.append((req.full_url, req.method))
+            return _fake_response(
+                {
+                    "ok": True,
+                    "generated_at": "2026-01-01T00:00:00+00:00",
+                    "btc": {"address": "bc1SellerAddress", "variants": {}},
+                    "usdt": {"address": "TSellerAddress", "variants": {}},
+                }
+            )
+
+        monkeypatch.setattr(hmweb3, "_urlopen", fake)
+        payload = hmweb3.payment_addresses()
+        assert payload["btc"]["address"] == "bc1SellerAddress"
+        assert payload["usdt"]["address"] == "TSellerAddress"
+        assert calls == [(hmweb3.DEFAULT_SELLER_URL + "/api/payment/addresses?source=app", "GET")]
+
+    def test_addresses_proxy_error_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            hmweb3, "_urlopen", lambda req, timeout=None: _fake_response({"ok": False, "detail": "denied"})
+        )
+        with pytest.raises(hmweb3.HmWeb3Error, match="denied"):
+            hmweb3.payment_addresses()
+
+    def test_balance_proxied_to_seller_when_no_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls: list[tuple[str, str, dict]] = []
+
+        def fake(req, timeout=None):
+            body = json.loads(req.data.decode())
+            calls.append((req.full_url, req.method, body))
+            return _fake_response(
+                {"ok": True, "chain": "btc", "address": "abc123def456xyz", "balance": "0.5", "unit": "BTC"}
+            )
+
+        monkeypatch.setattr(hmweb3, "_urlopen", fake)
+        result = hmweb3.check_balance("btc", "abc123def456xyz")
+        assert result["balance"] == "0.5"
+        assert calls == [
+            (
+                hmweb3.DEFAULT_SELLER_URL + "/api/payment/check",
+                "POST",
+                {"chain": "btc", "address": "abc123def456xyz"},
+            )
+        ]
+
+    def test_seller_url_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("HM_SELLER_URL", "https://pay.example.com/")
+        assert hmweb3._seller_base_url() == "https://pay.example.com"
+
+    def test_provider_used_when_key_present(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("HM_WEB3_API_KEY", "k")
+        count = {"n": 0}
+
+        def fake_generate(chain: str) -> dict:
+            count["n"] += 1
+            return _btc_wallet() if chain == "btc" else _usdt_wallet()
+
+        monkeypatch.setattr(hmweb3, "generate_wallet", fake_generate)
+        payload = hmweb3.payment_addresses()
+        assert count["n"] == 2
+        assert payload["btc"]["address"] == "bc1pBip84"

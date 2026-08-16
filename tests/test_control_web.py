@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 import threading
 import types
+import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -82,3 +83,68 @@ class TestControlPage:
         assert status == 200
         assert "text/css" not in ctype
         assert ":root" not in body
+
+
+class TestPaymentAddresses:
+    def test_plain_request_uses_cache_and_no_db_write(
+        self, server, tmp_path: Path, monkeypatch
+    ) -> None:
+        from dashboard import webapp
+        from database.admin_db import AdminDatabase
+
+        webapp.hmweb3.clear_address_cache()
+        db = AdminDatabase(tmp_path / "control.db")
+        monkeypatch.setattr(webapp, "_get_admin_db", lambda: db)
+        monkeypatch.setenv("HM_WEB3_API_KEY", "test-key")
+        monkeypatch.setattr(webapp.hmweb3, "generate_wallet", lambda chain: _wallet(chain))
+
+        base, _token = server
+        status, _ctype, body = _get(f"{base}/api/payment/addresses")
+        assert status == 200
+        assert "bc1AppBtc" in body
+        assert db.list_payments() == []
+
+    def test_app_source_records_pending_payments_and_rate_limits(
+        self, server, tmp_path: Path, monkeypatch
+    ) -> None:
+        from dashboard import webapp
+        from database.admin_db import AdminDatabase
+
+        webapp.hmweb3.clear_address_cache()
+        webapp._proxy_gen_times.clear()
+        monkeypatch.setattr(webapp, "_PROXY_GEN_LIMIT", 1)
+        db = AdminDatabase(tmp_path / "control.db")
+        monkeypatch.setattr(webapp, "_get_admin_db", lambda: db)
+        monkeypatch.setenv("HM_WEB3_API_KEY", "test-key")
+        monkeypatch.setattr(webapp.hmweb3, "generate_wallet", lambda chain: _wallet(chain))
+
+        base, _token = server
+        status, _ctype, body = _get(f"{base}/api/payment/addresses?source=app")
+        assert status == 200
+        assert "bc1AppBtc" in body
+
+        payments = db.list_payments(status="pending")
+        chains = {(p["chain"], p["address"]) for p in payments}
+        assert ("btc", "bc1AppBtc") in chains
+        assert ("usdt", "TAppUsdt") in chains
+
+        try:
+            _get(f"{base}/api/payment/addresses?source=app")
+            second_status = 200
+        except urllib.error.HTTPError as exc:
+            second_status = exc.code
+        assert second_status == 429  # rate limited
+
+
+def _wallet(chain: str) -> dict:
+    if chain == "btc":
+        return {
+            "ok": True,
+            "bitcoin_addresses": {"native_segwit_bip84": "bc1AppBtc"},
+            "derivation_paths": {},
+        }
+    return {
+        "ok": True,
+        "usdt_addresses": {"tron_trc20": "TAppUsdt"},
+        "derivation_paths": {},
+    }

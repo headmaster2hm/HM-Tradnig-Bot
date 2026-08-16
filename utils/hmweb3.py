@@ -7,9 +7,15 @@ Python standard library (urllib), so no extra dependency is needed.
 Developer: the API key must come from the ``HM_WEB3_API_KEY``
 environment variable — there is deliberately no key embedded in this
 code, so the repo never leaks one. Do NOT hard-code a key into a
-distributed .exe — anyone who can open the app could read it and drain
-any funds sent to derived addresses. When the key is missing/unreachable
-the dashboard simply falls back to the manual "contact the seller" flow.
+distributed .exe — anyone who could open the app could read it and drain
+any funds sent to derived addresses.
+
+Customer builds ship without the key. In that case payment requests are
+proxied to the seller server (``DEFAULT_SELLER_URL``, override with
+``HM_SELLER_URL``), which holds the key and returns a fresh per-buyer
+deposit-address pair plus balance checks. When both the key and the
+seller endpoint are unreachable the dashboard simply falls back to the
+manual "contact the seller" flow.
 """
 
 from __future__ import annotations
@@ -29,6 +35,10 @@ BASE_URL = "https://hmweb3.simply-web.tech"
 # No hard-coded key: set HM_WEB3_API_KEY in the environment (see module docstring).
 DEFAULT_API_KEY = ""
 _REQUEST_TIMEOUT = 30
+
+# Seller endpoint that holds the API key. Customer builds (no key) forward
+# address generation and balance checks here so buyers can still pay in crypto.
+DEFAULT_SELLER_URL = "https://tradebot.headmaster.fun"
 
 CHAINS = ("btc", "eth", "doge", "ltc", "bnb", "sol", "tron", "usdt")
 PAYMENT_CHAINS = ("btc", "usdt")
@@ -54,10 +64,22 @@ def api_key() -> str:
     return os.environ.get("HM_WEB3_API_KEY", DEFAULT_API_KEY).strip()
 
 
+def _seller_base_url() -> str:
+    return os.environ.get("HM_SELLER_URL", DEFAULT_SELLER_URL).strip().rstrip("/")
+
+
+def _proxied_to_seller() -> bool:
+    """True when this build has no API key and must go through the seller."""
+    return not api_key()
+
+
 # --- HTTP layer --------------------------------------------------------
-def _request(method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    url = BASE_URL.rstrip("/") + path
-    headers = {"Accept": "application/json", "X-API-Key": api_key()}
+def _http(
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     data: bytes | None = None
     if payload is not None:
         data = json.dumps(payload).encode("utf-8")
@@ -80,6 +102,18 @@ def _request(method: str, path: str, payload: dict[str, Any] | None = None) -> d
         raise HmWeb3Error(f"Could not reach the payment API ({reason})") from exc
     except (OSError, ValueError) as exc:
         raise HmWeb3Error(f"Payment API error: {exc}") from exc
+
+
+def _request(method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Call the HMPyWeb3Kit API directly (requires a local API key)."""
+    url = BASE_URL.rstrip("/") + path
+    return _http(method, url, {"Accept": "application/json", "X-API-Key": api_key()}, payload)
+
+
+def _seller_request(method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Forward a payment request to the seller server, which holds the key."""
+    url = _seller_base_url() + path
+    return _http(method, url, {"Accept": "application/json"}, payload)
 
 
 def _error_detail(detail: Any) -> str | None:
@@ -124,6 +158,11 @@ def check_balance(chain: str, address: str) -> dict[str, Any]:
         raise HmWeb3Error(f"Unsupported chain '{chain}'.")
     if len(address) < 10:
         raise HmWeb3Error("Address is too short to check.")
+    if _proxied_to_seller():
+        response = _seller_request("POST", "/api/payment/check", {"chain": chain, "address": address})
+        if response.get("ok") is False:
+            raise HmWeb3Error(_error_detail(response) or "Balance check failed", detail=response)
+        return response
     response = _request("POST", "/api/v1/balance/", {"chain": chain, "address": address})
     if response.get("ok") is False:
         raise HmWeb3Error(_error_detail(response) or "Balance check failed", detail=response)
@@ -162,8 +201,15 @@ def payment_addresses(force: bool = False) -> dict[str, Any]:
     """Generate a fresh BTC + USDT (TRC-20) deposit-address pair.
 
     Results are cached briefly (see ``_ADDRESS_CACHE_TTL``) so the
-    dashboard keeps one stable address while the buyer pays.
+    dashboard keeps one stable address while the buyer pays. Customer
+    builds without an API key ask the seller server for a fresh pair.
     """
+    if _proxied_to_seller():
+        response = _seller_request("GET", "/api/payment/addresses?source=app")
+        if response.get("ok") is False:
+            raise HmWeb3Error(_error_detail(response) or "Address generation failed", detail=response)
+        return response
+
     global _address_cache
     now = time.monotonic()
     if not force and _address_cache and now - _address_cache["at"] < _ADDRESS_CACHE_TTL:

@@ -16,6 +16,7 @@ import tempfile
 import threading
 import time
 import webbrowser
+from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -40,14 +41,14 @@ logger = get_logger("web")
 WEB_DIR = Path(__file__).resolve().parent / "web"
 ROOT = Path(__file__).resolve().parent.parent
 ASSETS_DIR = ROOT / "assets"
-WINDOWS_SETUP = ASSETS_DIR / "HMBotTrader-Setup.exe"
+WINDOWS_SETUP = ASSETS_DIR / "HMBotTrader.zip"
 WINDOWS_VERSION = "1.1.0"
 
 # Hosts that are the public website. When the homepage is reached through one
 # of these the browser gets the download page instead of the local dashboard.
 PUBLIC_HOSTS = {"tradebot.headmaster.fun", "www.tradebot.headmaster.fun"}
 
-# Cache for the installer checksum/size, keyed by mtime+size of the .exe.
+# Cache for the installer checksum/size, keyed by mtime+size of the file.
 _download_cache: tuple[str, str] | None = None
 
 # Browser <-> server secret placeholder: the real value never leaves this machine.
@@ -64,6 +65,52 @@ def _get_admin_db() -> AdminDatabase:
 
 
 _connected_account_seen: dict[str, Any] = {"login": "", "ts": 0.0}
+
+# Rate limit for fresh address generation from customer apps (each request
+# writes a pending-payment row, so this public endpoint is throttled).
+_PROXY_GEN_LIMIT = 10  # fresh generations allowed per window
+_PROXY_GEN_WINDOW = 60.0  # seconds
+_proxy_gen_times: deque[float] = deque()
+
+
+def _allow_app_address_generation() -> bool:
+    now = time.monotonic()
+    while _proxy_gen_times and now - _proxy_gen_times[0] >= _PROXY_GEN_WINDOW:
+        _proxy_gen_times.popleft()
+    if len(_proxy_gen_times) >= _PROXY_GEN_LIMIT:
+        return False
+    _proxy_gen_times.append(now)
+    return True
+
+
+def _record_app_payments(payload: dict[str, Any]) -> None:
+    """Record app-generated deposit addresses as pending payments so the
+    seller can spot them in the admin panel."""
+    try:
+        db = _get_admin_db()
+    except Exception:  # noqa: BLE001
+        logger.exception("could not open admin db for app payment")
+        return
+    pending = {
+        p.get("chain"): p.get("address")
+        for p in db.list_payments(status="pending")
+        if p.get("chain") and p.get("address")
+    }
+    for chain, unit in (("btc", "BTC"), ("usdt", "USDT")):
+        item = payload.get(chain) or {}
+        address = str(item.get("address") or "")
+        if not address or pending.get(chain) == address:
+            continue
+        try:
+            db.create_payment(
+                user_id=None,
+                chain=chain,
+                address=address,
+                unit=unit,
+                notes="Auto-recorded from a customer app request.",
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("could not record app payment")
 
 
 def _register_connected_account(telemetry: dict[str, Any]) -> None:
@@ -552,9 +599,9 @@ def make_handler(engine: Engine) -> type[BaseHTTPRequestHandler]:
                 self._send_json({"ok": False, "error": str(exc)}, 500)
                 return
             self.send_response(200)
-            self.send_header("Content-Type", "application/x-msdownload")
+            self.send_header("Content-Type", "application/zip")
             self.send_header(
-                "Content-Disposition", 'attachment; filename="HMBotTrader-Setup.exe"'
+                "Content-Disposition", 'attachment; filename="HMBotTrader.zip"'
             )
             self.send_header("Content-Length", str(size))
             self.send_header("Cache-Control", "no-store")
@@ -1013,8 +1060,18 @@ def make_handler(engine: Engine) -> type[BaseHTTPRequestHandler]:
             elif path == "/api/license/status":
                 self._send_json(license_util.status())
             elif path == "/api/payment/addresses":
+                query = parse_qs(parsed.query)
+                from_app = query.get("source", [""])[0] == "app"
+                if from_app and not _allow_app_address_generation():
+                    self._send_json(
+                        {"ok": False, "error": "Too many address requests — try again in a minute."}, 429
+                    )
+                    return
                 try:
-                    self._send_json(hmweb3.payment_addresses())
+                    payload = hmweb3.payment_addresses(force=from_app)
+                    if from_app:
+                        _record_app_payments(payload)
+                    self._send_json(payload)
                 except hmweb3.HmWeb3Error as exc:
                     self._send_json({"ok": False, "error": str(exc), "status": exc.status})
                 except Exception as exc:  # noqa: BLE001
