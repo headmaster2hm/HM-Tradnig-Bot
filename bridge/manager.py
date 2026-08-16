@@ -166,7 +166,7 @@ class BridgeManager:
             telemetry = dict(self._telemetry)
             last_telemetry_at = self._last_telemetry_at
             since = self._attached_since
-        account = telemetry.get("account") or {}
+        account = extract_account(telemetry)
         return {
             "connected": connected,
             "since": since,
@@ -187,6 +187,40 @@ class BridgeManager:
 
 def resolve_bridge_token() -> str:
     return os.environ.get(ENV_BRIDGE_TOKEN, "").strip()
+
+
+def extract_account(telemetry: dict[str, Any]) -> dict[str, Any]:
+    """Best-effort account dict from a telemetry payload.
+
+    Current agents send ``{"account": {...}}`` but early builds sent the raw
+    MT5 ``AccountInfo`` as a single-element list, or positionally as a list of
+    scalars. Only the stable anchors of the positional form are decoded:
+    ``login`` is always first, ``balance`` sits at index 10, and the four
+    trailing string fields are always ``name``/``server``/``currency``/``company``.
+    """
+    account = telemetry.get("account")
+    if isinstance(account, dict):
+        return account
+    if isinstance(account, (list, tuple)):
+        for item in account:
+            if isinstance(item, dict):
+                return item
+        values = list(account)
+        if len(values) >= 14 and all(
+            not isinstance(item, (list, tuple, dict)) for item in values
+        ):
+            return {
+                "login": values[0],
+                "balance": values[10],
+                "equity": values[13],
+                "margin": values[14],
+                "margin_free": values[15],
+                "name": values[-4],
+                "server": values[-3],
+                "currency": values[-2],
+                "company": values[-1],
+            }
+    return {}
 
 
 _bridge_manager: BridgeManager | None = None

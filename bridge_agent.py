@@ -54,12 +54,12 @@ def _to_json(value: Any) -> Any:
             return _to_json(dict(zip(value.dtype.names, value.tolist())))
     if isinstance(value, dict):
         return {str(key): _to_json(item) for key, item in value.items()}
+    if hasattr(value, "_asdict"):  # namedtuple (MT5 info/position/deal objects)
+        return _to_json(value._asdict())
     if isinstance(value, (list, tuple)):
         return [_to_json(item) for item in value]
     if isinstance(value, (datetime, date)):
         return value.isoformat()
-    if hasattr(value, "_asdict"):  # namedtuple (MT5 info/position/deal objects)
-        return _to_json(value._asdict())
     if hasattr(value, "__dict__"):
         return _to_json(vars(value))
     return str(value)

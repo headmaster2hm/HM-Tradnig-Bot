@@ -24,7 +24,7 @@ from urllib.parse import parse_qs, urlparse
 import pandas as pd
 
 from backtest import run_backtest
-from bridge.manager import get_manager
+from bridge.manager import extract_account, get_manager
 from config import AppConfig, config_security_notices, load_config, save_config
 from config.config_loader import _build_config, _merge
 from database.admin_db import AdminDatabase
@@ -74,7 +74,7 @@ def _register_connected_account(telemetry: dict[str, Any]) -> None:
     stamp last_seen_at so the account shows up in the admin Users tab.
     Writes are throttled to ~once a minute per account.
     """
-    account = telemetry.get("account") or {}
+    account = extract_account(telemetry)
     login = str(account.get("login") or "").strip()
     if not login or login == "SIM" or not login.isdigit():
         return
@@ -1002,7 +1002,6 @@ def make_handler(engine: Engine) -> type[BaseHTTPRequestHandler]:
             parsed = urlparse(self.path)
             path = parsed.path
             if path == "/bridge/ws" and self.headers.get("Upgrade", "").lower() == "websocket":
-                from bridge.manager import get_manager
                 from bridge.ws import serve as serve_bridge
 
                 serve_bridge(self, get_manager())
