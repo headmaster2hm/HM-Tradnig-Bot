@@ -83,6 +83,8 @@ class BridgeAgent:
         self._stop = threading.Event()
         self._last_init_error = ""
         self._mt5 = None
+        self._mt5_ready = False
+        self._mt5_lock = threading.Lock()
         self.connected = False
         self.account: Any = None
         self.status_text = "idle"
@@ -101,13 +103,41 @@ class BridgeAgent:
             self._last_init_error = "MetaTrader5 package not installed on this machine"
             return False
 
+    def _ensure_mt5_ready(self) -> bool:
+        """Initialize the local MT5 terminal once so telemetry carries a login.
+
+        Initialization happens lazily from the telemetry loop (and never blocks
+        the websocket reply path): the terminal launches/attaches on first use
+        and we retry each second until it succeeds.
+        """
+        if self._mt5_ready:
+            return True
+        if not self._import_mt5():
+            return False
+        with self._mt5_lock:
+            if self._mt5_ready:
+                return True
+            try:
+                ok = bool(self._mt5.initialize(**self.init_kwargs))
+            except Exception as exc:  # noqa: BLE001
+                ok = False
+                self._last_init_error = str(exc)
+            if ok:
+                self._mt5_ready = True
+            else:
+                self._last_init_error = str(self._mt5.last_error())
+                logging.getLogger("agent").warning(
+                    "MT5 initialize failed: %s", self._last_init_error
+                )
+            return ok
+
     def _dispatch(self, method: str, params: dict[str, Any]) -> Any:
         if not self._import_mt5():
             return {"_hm_error": self._last_init_error}
         mt5 = self._mt5
 
         if method == "initialize":
-            return bool(mt5.initialize(**self.init_kwargs))
+            return self._ensure_mt5_ready()
         if method == "shutdown":
             return bool(mt5.shutdown())
         if method == "terminal_info":
@@ -223,7 +253,7 @@ class BridgeAgent:
         last_ping = time.time()
         while not self._stop.is_set():
             try:
-                if self._import_mt5():
+                if self._ensure_mt5_ready():
                     mt5 = self._mt5
                     account = _to_json(mt5.account_info())
                     self.account = account
