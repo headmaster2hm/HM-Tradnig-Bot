@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
+import time
 
 import numpy as np
 import pandas as pd
@@ -42,6 +43,8 @@ class MT5Client:
         self._paper_ticket = 100000
         self.last_error: str = ""
         self.using_simulated_feed: bool = False
+        self._last_connect_attempt: float = 0.0
+        self._last_health_check: float = 0.0
 
     def _set_error(self, message: str) -> None:
         self.last_error = message
@@ -269,13 +272,21 @@ class MT5Client:
             return False
 
     def ensure_connected(self) -> bool:
+        now = time.time()
         if self.connected and self._mt5 is not None:
+            # Periodic health check every 30 seconds instead of every tick
+            if now - self._last_health_check < 30.0:
+                return True
+            self._last_health_check = now
             try:
                 if self._mt5.terminal_info() is not None:
                     return True
             except Exception:  # noqa: BLE001
                 logger.warning("MT5 connection lost — reconnecting")
-                self.connected = False
+            self.connected = False
+        if now - self._last_connect_attempt < 5.0:
+            return self.connected
+        self._last_connect_attempt = now
         return self.connect()
 
     def shutdown(self) -> None:
