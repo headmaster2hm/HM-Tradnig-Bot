@@ -6,8 +6,9 @@ frame with ``{"type": "auth", "token": ...}``. After that it:
 - answers RPC calls  ``{"id": N, "result": ...}`` / ``{"id": N, "error": ...}``
 - pushes telemetry   ``{"type": "telemetry", "data": {...}}`` every second
 
-Only one agent may be attached at a time. Calls fail fast when the agent is
-not connected, so the bot's polling loop never stalls on a dead bridge.
+Multiple agents may be attached simultaneously — each identified by its
+MT5 account login (extracted from the first telemetry push).  RPC calls
+are routed to the agent matching the requested ``account`` parameter.
 """
 
 from __future__ import annotations
@@ -39,51 +40,110 @@ class _Connection:
         self.closed = False
 
 
+class _AgentState:
+    """Tracks one connected bridge agent."""
+
+    __slots__ = ("conn", "agent_key", "login", "telemetry", "last_telemetry_at", "attached_since")
+
+    def __init__(self, conn: _Connection, agent_key: str) -> None:
+        self.conn = conn
+        self.agent_key = agent_key
+        self.login: str | None = None
+        self.telemetry: dict[str, Any] = {}
+        self.last_telemetry_at: float | None = None
+        self.attached_since: float = time.time()
+
+
 class BridgeManager:
     def __init__(self) -> None:
-        self._conn: _Connection | None = None
+        self._agents: dict[str, _AgentState] = {}
+        self._conn_to_key: dict[int, str] = {}
+        self._next_temp = 0
         self._next_id = 0
         self._pending: dict[int, tuple[threading.Event, dict[str, Any]]] = {}
         self._send_lock = threading.Lock()
         self._pending_lock = threading.Lock()
         self._state_lock = threading.Lock()
-        self._telemetry: dict[str, Any] = {}
-        self._attached_since: float | None = None
-        self._last_telemetry_at: float | None = None
         self.on_telemetry: Callable[[dict[str, Any]], None] | None = None
         self._last_log = 0.0
 
     # -- transport -------------------------------------------------------
     def attach(self, conn: _Connection) -> bool:
         with self._state_lock:
-            if self._conn is not None:
-                return False
-            self._conn = conn
-            self._attached_since = time.time()
-        logger.info("bridge agent attached")
+            key = f"_temp_{self._next_temp}"
+            self._next_temp += 1
+            agent = _AgentState(conn, key)
+            self._agents[key] = agent
+            self._conn_to_key[id(conn)] = key
+        logger.info("bridge agent attached (pending identification)")
         return True
+
+    def _identify_agent(self, login: str, conn: _Connection) -> None:
+        """Promote a pending agent to an identified login key."""
+        with self._state_lock:
+            old_key = self._conn_to_key.get(id(conn))
+            if old_key is None:
+                return
+            agent = self._agents.pop(old_key, None)
+            if agent is None:
+                return
+            del self._conn_to_key[id(conn)]
+            agent.login = login
+            agent.agent_key = login
+            if login in self._agents:
+                old = self._agents[login]
+                logger.info("bridge: replacing previous agent for login %s", login)
+                try:
+                    old.conn.close()
+                except Exception:  # noqa: BLE001
+                    pass
+            self._agents[login] = agent
+            self._conn_to_key[id(conn)] = login
+            logger.info("bridge: agent identified as login %s", login)
 
     def detach(self, conn: _Connection) -> None:
         with self._state_lock:
-            if self._conn is conn:
-                self._conn = None
-                self._attached_since = None
-                self._telemetry = {}
-                self._last_telemetry_at = None
+            key = self._conn_to_key.pop(id(conn), None)
+            if key is not None:
+                agent = self._agents.pop(key, None)
+                if agent is not None and agent.login:
+                    logger.info("bridge: agent %s detached", agent.login)
+                else:
+                    logger.info("bridge: unidentified agent detached")
+            else:
+                logger.info("bridge: agent detached")
         with self._pending_lock:
             for _event, holder in self._pending.values():
                 holder["error"] = "bridge disconnected"
             self._pending.clear()
-        logger.info("bridge agent detached")
 
     @property
     def connected(self) -> bool:
         with self._state_lock:
-            return self._conn is not None and not self._conn.closed
+            for agent in self._agents.values():
+                if not agent.conn.closed:
+                    return True
+            return False
 
-    def _send(self, payload: dict[str, Any]) -> None:
-        conn = self._conn
-        if conn is None or conn.closed:
+    def _get_agent(self, account: str | None = None) -> _AgentState | None:
+        with self._state_lock:
+            if account:
+                agent = self._agents.get(str(account))
+                if agent and not agent.conn.closed:
+                    return agent
+                return None
+            # Default: first identified (non-temp) agent
+            for key, agent in self._agents.items():
+                if not key.startswith("_temp_") and not agent.conn.closed:
+                    return agent
+            # Fall back to first pending agent
+            for agent in self._agents.values():
+                if not agent.conn.closed:
+                    return agent
+            return None
+
+    def _send_to(self, payload: dict[str, Any], conn: _Connection) -> None:
+        if conn.closed:
             raise BridgeError("bridge not connected")
         text = json.dumps(payload)
         with self._send_lock:
@@ -95,12 +155,18 @@ class BridgeManager:
 
     def _reject_new(self) -> bool:
         """Another connection is active — don't replace it silently."""
-        with self._state_lock:
-            return self._conn is not None and not self._conn.closed
+        return self.connected
 
     # -- RPC -------------------------------------------------------------
-    def call(self, method: str, params: dict[str, Any] | None = None, timeout: float = CALL_TIMEOUT) -> Any:
-        if not self.connected:
+    def call(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        timeout: float = CALL_TIMEOUT,
+        account: str | None = None,
+    ) -> Any:
+        agent = self._get_agent(account)
+        if agent is None:
             self._throttled_log("bridge down — call %s failed fast", method)
             raise BridgeError("bridge not connected")
         with self._pending_lock:
@@ -111,7 +177,7 @@ class BridgeManager:
         with self._pending_lock:
             self._pending[msg_id] = (event, holder)
         try:
-            self._send({"id": msg_id, "method": method, "params": params or {}})
+            self._send_to({"id": msg_id, "method": method, "params": params or {}}, agent.conn)
         except BridgeError:
             with self._pending_lock:
                 self._pending.pop(msg_id, None)
@@ -125,7 +191,7 @@ class BridgeManager:
             raise BridgeError(f"bridge '{method}' error: {holder['error']}")
         return holder.get("result")
 
-    def _on_message(self, payload: dict[str, Any]) -> None:
+    def _on_message(self, payload: dict[str, Any], conn: _Connection | None = None) -> None:
         if "id" in payload:
             msg_id = payload.get("id")
             if not isinstance(msg_id, int):
@@ -144,9 +210,19 @@ class BridgeManager:
         if payload.get("type") == "telemetry":
             data = payload.get("data")
             if isinstance(data, dict):
+                # Identify agent from telemetry login
+                if conn is not None:
+                    account = extract_account(data)
+                    login = str(account.get("login") or "").strip()
+                    if login and login != "SIM" and login.isdigit():
+                        self._identify_agent(login, conn)
+                # Update per-agent telemetry
                 with self._state_lock:
-                    self._telemetry = data
-                    self._last_telemetry_at = time.time()
+                    if conn is not None:
+                        key = self._conn_to_key.get(id(conn))
+                        if key and key in self._agents:
+                            self._agents[key].telemetry = data
+                            self._agents[key].last_telemetry_at = time.time()
                 if self.on_telemetry is not None:
                     try:
                         self.on_telemetry(data)
@@ -156,27 +232,45 @@ class BridgeManager:
         logger.debug("bridge: unhandled message %r", payload)
 
     # -- cached telemetry ------------------------------------------------
-    def telemetry(self) -> dict[str, Any]:
+    def telemetry(self, account: str | None = None) -> dict[str, Any]:
+        agent = self._get_agent(account)
+        if agent is None:
+            return {}
         with self._state_lock:
-            return dict(self._telemetry)
+            return dict(agent.telemetry)
 
     def bridge_status(self) -> dict[str, Any]:
         with self._state_lock:
-            connected = self._conn is not None and not self._conn.closed
-            telemetry = dict(self._telemetry)
-            last_telemetry_at = self._last_telemetry_at
-            since = self._attached_since
-        account = extract_account(telemetry)
-        return {
-            "connected": connected,
-            "since": since,
-            "last_telemetry_at": last_telemetry_at,
-            "login": account.get("login"),
-            "server": account.get("server"),
-            "name": account.get("name"),
-            "balance": account.get("balance"),
-            "currency": account.get("currency"),
-        }
+            agents_info = []
+            for key, agent in self._agents.items():
+                acct = extract_account(agent.telemetry)
+                agents_info.append({
+                    "connected": not agent.conn.closed,
+                    "login": acct.get("login") or agent.login,
+                    "server": acct.get("server"),
+                    "name": acct.get("name"),
+                    "balance": acct.get("balance"),
+                    "currency": acct.get("currency"),
+                    "since": agent.attached_since,
+                    "last_telemetry_at": agent.last_telemetry_at,
+                })
+        if not agents_info:
+            return {
+                "connected": False,
+                "since": None,
+                "last_telemetry_at": None,
+                "login": None,
+                "server": None,
+                "name": None,
+                "balance": None,
+                "currency": None,
+            }
+        # Backward compat: return first identified agent
+        primary = next(
+            (a for a in agents_info if a.get("login")), agents_info[0]
+        )
+        result = {**primary, "agents": agents_info}
+        return result
 
     def _throttled_log(self, fmt: str, *args: Any) -> None:
         now = time.time()

@@ -219,6 +219,7 @@ async function doLogout() {
 /* ------------------------------------------------------------------ */
 const VIEWS = {
   overview: "Overview",
+  account: "Account",
   settings: "Settings",
   users: "Users",
   payments: "Payments",
@@ -228,16 +229,18 @@ const VIEWS = {
   security: "Security",
 };
 
-function switchView(view) {
+function switchView(view, params) {
   state.view = view;
+  state.viewParams = params || {};
   document.querySelectorAll(".nav-btn").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
-  $("page-title").textContent = VIEWS[view];
+  $("page-title").textContent = VIEWS[view] || view;
   const topRight = $("top-right");
   topRight.innerHTML = "";
   const content = $("content");
   content.innerHTML = `<div class="empty">Loading…</div>`;
   const renderers = {
     overview: renderOverview,
+    account: renderAccount,
     settings: renderSettings,
     users: renderUsers,
     payments: renderPayments,
@@ -256,19 +259,6 @@ async function renderOverview(content, topRight) {
   try {
     const res = await api("/api/control/overview");
     const s = res.store || {};
-    const e = res.engine || {};
-    const isLive = /live/i.test(e.status || "");
-    const running = /running|trading|live|paper/i.test(e.status || "");
-
-    const controls = el("div", "row-actions");
-    if (!running) controls.appendChild(smallBtn("Start", () => engineAction("start")));
-    if (running) {
-      controls.appendChild(smallBtn("Pause", () => engineAction("pause")));
-      controls.appendChild(smallBtn("Stop", () => engineAction("stop"), "danger"));
-    }
-    controls.appendChild(smallBtn("Reset limits", () => engineAction("reset_limits")));
-    controls.appendChild(smallBtn("Close all", () => engineAction("close_all"), "danger"));
-    topRight.appendChild(controls);
 
     content.innerHTML = "";
     const stats = [
@@ -283,43 +273,32 @@ async function renderOverview(content, topRight) {
     stats.forEach(([l, v]) => grid.appendChild(statCard(l, v, l === "Revenue" ? "up" : "")));
     content.appendChild(grid);
 
-    const engineCard = el("div", "card");
-    engineCard.appendChild(el("h3", "card-title", "Trading engine"));
-    const dotCls = isLive ? "live" : running ? "warn" : "";
-    const line = el("p", "", "");
-    line.appendChild(el("span", "engine-dot " + dotCls));
-    line.appendChild(
-      document.createTextNode(
-        `${e.mode || e.status || "IDLE"}${e.symbol ? " · " + e.symbol : ""}${e.connected ? " · connected" : ""}`
-      )
-    );
-    engineCard.appendChild(line);
-    const mini = el("div", "stat-grid");
-    mini.appendChild(statCard("Day P/L", fmtMoney(e.day_profit)));
-    mini.appendChild(statCard("Win rate", (e.win_rate ?? 0) + "%"));
-    mini.appendChild(statCard("Trades today", e.trades_today ?? 0));
-    mini.appendChild(statCard("Spread", e.spread ?? "—"));
-    engineCard.appendChild(mini);
-    content.appendChild(engineCard);
-
-    const b = res.bridge || {};
+    const agents = (res.bridge && res.bridge.agents) || [];
+    const connectedAgents = agents.filter((a) => a.connected);
     const bridgeCard = el("div", "card");
-    bridgeCard.appendChild(el("h3", "card-title", "Connected MT5"));
-    if (!b.connected || !b.login) {
+    bridgeCard.appendChild(el("h3", "card-title", "Connected MT5 Accounts"));
+    if (!connectedAgents.length) {
       bridgeCard.appendChild(el("p", "empty", "No MT5 terminal connected right now."));
     } else {
-      const bline = el("p", "", "");
-      bline.appendChild(el("span", "engine-dot live"));
-      bline.appendChild(
-        document.createTextNode(
-          `Account ${esc(b.login)}${b.server ? " · " + esc(b.server) : ""}${b.name ? " · " + esc(b.name) : ""}`
-        )
-      );
-      bridgeCard.appendChild(bline);
-      const bgrid = el("div", "stat-grid");
-      bgrid.appendChild(statCard("Balance", fmtMoney(b.balance)));
-      bgrid.appendChild(statCard("Currency", esc(b.currency || "—")));
-      bridgeCard.appendChild(bgrid);
+      connectedAgents.forEach((a) => {
+        const agentRow = el("div", "agent-row");
+        const dotLine = el("p", "", "");
+        dotLine.appendChild(el("span", "engine-dot live"));
+        dotLine.appendChild(
+          document.createTextNode(
+            `Account ${esc(String(a.login || "—"))}${a.server ? " · " + esc(a.server) : ""}${a.name ? " · " + esc(a.name) : ""}`
+          )
+        );
+        agentRow.appendChild(dotLine);
+        const bgrid = el("div", "stat-grid");
+        bgrid.appendChild(statCard("Balance", fmtMoney(a.balance)));
+        bgrid.appendChild(statCard("Currency", esc(a.currency || "—")));
+        agentRow.appendChild(bgrid);
+        const viewBtn = smallBtn("View details", () => switchView("account", { login: String(a.login || "") }));
+        viewBtn.style.marginTop = "8px";
+        agentRow.appendChild(viewBtn);
+        bridgeCard.appendChild(agentRow);
+      });
     }
     content.appendChild(bridgeCard);
 
@@ -345,6 +324,121 @@ async function engineAction(action) {
     switchView("overview");
   } catch (ex) {
     toast(ex.message, "error");
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* account detail                                                      */
+/* ------------------------------------------------------------------ */
+async function renderAccount(content, topRight) {
+  const login = (state.viewParams && state.viewParams.login) || "";
+  if (!login) {
+    content.innerHTML = `<div class="empty">No account selected.</div>`;
+    return;
+  }
+
+  const backBtn = smallBtn("← Back to overview", () => switchView("overview"));
+  topRight.appendChild(backBtn);
+
+  try {
+    const res = await api("/api/control/account?login=" + encodeURIComponent(login));
+    if (!res.ok) throw new Error(res.error || "Failed to load");
+
+    const acct = res.account || {};
+    const term = res.terminal || {};
+    const positions = res.positions || [];
+    const user = res.user || {};
+    const connected = res.connected;
+
+    content.innerHTML = "";
+
+    // Header card
+    const header = el("div", "card");
+    header.appendChild(el("h3", "card-title", `MT5 Account ${esc(String(login))}`));
+    const dotLine = el("p", "", "");
+    dotLine.appendChild(el("span", "engine-dot " + (connected ? "live" : "")));
+    dotLine.appendChild(
+      document.createTextNode(
+        connected
+          ? `Online · ${esc(acct.name || "—")} · ${esc(acct.server || "—")}`
+          : `Offline${acct.name ? " · " + esc(acct.name) : ""}${acct.server ? " · " + esc(acct.server) : ""}`
+      )
+    );
+    header.appendChild(dotLine);
+    if (user.name || user.email) {
+      const parts = [];
+      if (user.name) parts.push(esc(user.name));
+      if (user.email) parts.push(esc(user.email));
+      if (user.notes) parts.push(esc(user.notes));
+      header.appendChild(el("p", "muted", parts.join(" · ")));
+    }
+    if (user.status) {
+      const licP = el("p", "muted");
+      licP.appendChild(document.createTextNode("License: "));
+      licP.appendChild(pill(user.status, user.status === "active" ? "ok" : "bad"));
+      header.appendChild(licP);
+    }
+    if (acct.company) {
+      header.appendChild(el("p", "muted", `Broker: ${esc(acct.company)}`));
+    }
+    if (user.last_seen_at) {
+      header.appendChild(el("p", "muted", `Last seen: ${fmtDT(user.last_seen_at)}`));
+    }
+    content.appendChild(header);
+
+    if (!connected) {
+      content.appendChild(el("p", "empty", "Bridge agent is not connected. Data will appear once the customer starts their bot."));
+    }
+
+    const stats = el("div", "stat-grid");
+    stats.appendChild(statCard("Balance", fmtMoney(acct.balance)));
+    stats.appendChild(statCard("Equity", fmtMoney(acct.equity)));
+    stats.appendChild(statCard("Profit", fmtMoney(acct.profit)));
+    stats.appendChild(statCard("Margin", fmtMoney(acct.margin)));
+    stats.appendChild(statCard("Free margin", fmtMoney(acct.margin_free)));
+    content.appendChild(stats);
+
+    const termCard = el("div", "card");
+    termCard.appendChild(el("h3", "card-title", "Terminal"));
+    const tgrid = el("div", "stat-grid");
+    const tradeAllowed = term.trade_allowed;
+    tgrid.appendChild(statCard("Algo trading", connected ? (tradeAllowed ? "ON" : "OFF") : "—", !connected ? "" : tradeAllowed ? "up" : "bad"));
+    tgrid.appendChild(statCard("Login", String(acct.login || login)));
+    tgrid.appendChild(statCard("Server", esc(acct.server || "—")));
+    termCard.appendChild(tgrid);
+    content.appendChild(termCard);
+
+    const posCard = el("div", "card");
+    posCard.appendChild(el("h3", "card-title", `Open Positions (${positions.length})`));
+    if (!positions.length) {
+      posCard.appendChild(el("p", "empty", connected ? "No open positions." : "Agent offline — positions unknown."));
+    } else {
+      const ptbl = el("table", "tbl");
+      ptbl.innerHTML = "<thead><tr><th>Ticket</th><th>Symbol</th><th>Type</th><th>Volume</th><th>Open price</th><th>S/L</th><th>T/P</th><th>Profit</th></tr></thead>";
+      const ptbody = el("tbody");
+      positions.forEach((p) => {
+        const tr = el("tr");
+        tr.appendChild(el("td", "mono-cell", p.ticket));
+        tr.appendChild(el("td", "", esc(p.symbol || "—")));
+        tr.appendChild(el("td", "", p.type === 0 ? "BUY" : "SELL"));
+        tr.appendChild(el("td", "", p.volume));
+        tr.appendChild(el("td", "mono-cell", p.price_open));
+        tr.appendChild(el("td", "mono-cell", p.sl || "—"));
+        tr.appendChild(el("td", "mono-cell", p.tp || "—"));
+        const profitCls = (p.profit || 0) >= 0 ? "money-up" : "money-down";
+        const profitTd = el("td", profitCls, fmtMoney(p.profit));
+        tr.appendChild(profitTd);
+        ptbody.appendChild(tr);
+      });
+      ptbl.appendChild(ptbody);
+      const wrap = el("div", "tbl-wrap");
+      wrap.appendChild(ptbl);
+      posCard.appendChild(wrap);
+    }
+    content.appendChild(posCard);
+  } catch (ex) {
+    content.innerHTML = "";
+    content.appendChild(el("p", "empty", "Failed to load: " + esc(ex.message)));
   }
 }
 
@@ -508,6 +602,7 @@ async function renderUsers(content, topRight) {
     const tr = el("tr");
     const td = el("td");
     const actions = el("div", "row-actions");
+    if (u.mt5_account) actions.appendChild(smallBtn("View", () => switchView("account", { login: u.mt5_account })));
     actions.appendChild(
       smallBtn(u.status === "active" ? "Disable" : "Enable", async () => {
         await setUserStatus(u.id, u.status === "active" ? "disabled" : "active");

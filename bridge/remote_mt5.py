@@ -107,8 +107,9 @@ def _rates_frame(rows: list[dict[str, Any]] | None) -> np.ndarray | None:
 class RemoteMT5:
     """Proxy with the same API surface the bot uses from ``MetaTrader5``."""
 
-    def __init__(self) -> None:
+    def __init__(self, target_account: str | None = None) -> None:
         self._manager = get_manager()
+        self._target_account = target_account
         self._connected = False
         self._last_error: tuple[int, str] = (0, "")
         self._log_throttle = 0.0
@@ -132,7 +133,9 @@ class RemoteMT5:
     # -- helpers ---------------------------------------------------------
     def _call(self, method: str, params: dict[str, Any] | None = None, timeout: float = 8.0) -> Any:
         try:
-            result = self._manager.call(f"mt5.{method}", params, timeout=timeout)
+            result = self._manager.call(
+                f"mt5.{method}", params, timeout=timeout, account=self._target_account
+            )
         except BridgeError as exc:
             self._last_error = (-1, str(exc))
             now = time.time()

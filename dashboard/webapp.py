@@ -701,13 +701,15 @@ def make_handler(engine: Engine) -> type[BaseHTTPRequestHandler]:
                     "connected": bool(snap.connected),
                     "symbol": engine.config.symbol,
                     "dry_run": bool(snap.dry_run),
-                    "paused": bool(engine.paused),
+                    "paused": bool(engine.executor.paused),
                     "day_profit": round(float(snap.day_profit or 0.0), 2),
                     "win_rate": round(float(snap.win_rate or 0.0), 1),
-                    "trades_today": int(getattr(engine, "risk", None).trades_today)
-                    if getattr(engine, "risk", None)
+                    "trades_today": int(getattr(engine.executor, "risk", None).trades_today)
+                    if getattr(engine.executor, "risk", None)
                     else 0,
-                    "spread": 0.0,
+                    "spread": round(float(engine.executor.client.symbol_spread_points()), 1)
+                    if engine.executor
+                    else 0.0,
                 }
             except Exception:  # noqa: BLE001
                 return {"ok": False, "status": "IDLE", "mode": "—"}
@@ -793,6 +795,60 @@ def make_handler(engine: Engine) -> type[BaseHTTPRequestHandler]:
                     self._export_csv()
                 except Exception as exc:  # noqa: BLE001
                     self._send_json({"ok": False, "error": str(exc)}, 500)
+                return
+            if path == "/api/control/account":
+                if not self._require_control():
+                    return
+                login = query.get("login", [""])[0]
+                if not login:
+                    self._send_json({"ok": False, "error": "login required"}, 400)
+                    return
+                mgr = get_manager()
+                telemetry = mgr.telemetry(account=login)
+                account = extract_account(telemetry) if telemetry else {}
+                positions = telemetry.get("positions", []) if telemetry else []
+                terminal = telemetry.get("terminal", {}) if telemetry else {}
+
+                # Look up user info from the admin DB
+                user_info = {}
+                try:
+                    row = engine.control_db.get_user_by_account(login)
+                    if row:
+                        user_info = {
+                            "id": row.get("id"),
+                            "name": row.get("name") or "",
+                            "email": row.get("email") or "",
+                            "notes": row.get("notes") or "",
+                            "status": row.get("status") or "active",
+                            "created_at": row.get("created_at") or "",
+                            "last_seen_at": row.get("last_seen_at") or "",
+                        }
+                except Exception:  # noqa: BLE001
+                    pass
+
+                # Check connection status from bridge
+                connected = False
+                since = None
+                last_telemetry_at = None
+                agents = mgr.bridge_status().get("agents", [])
+                for a in agents:
+                    if str(a.get("login")) == str(login):
+                        connected = a.get("connected", False)
+                        since = a.get("since")
+                        last_telemetry_at = a.get("last_telemetry_at")
+                        break
+
+                self._send_json({
+                    "ok": True,
+                    "login": login,
+                    "connected": connected,
+                    "since": since,
+                    "last_telemetry_at": last_telemetry_at,
+                    "account": account,
+                    "terminal": terminal,
+                    "positions": positions if isinstance(positions, list) else [],
+                    "user": user_info,
+                })
                 return
             self._send_json({"ok": False, "error": "Not found"}, 404)
 

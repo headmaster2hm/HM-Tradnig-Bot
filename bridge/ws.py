@@ -142,12 +142,8 @@ def serve(handler: Any, manager: Any) -> None:
             _send_error_and_close(conn, "auth failed")
             return
 
-        if not manager.attach(conn):
-            logger.warning("bridge: another agent already attached")
-            _send_error_and_close(conn, "busy")
-            return
-
         conn.send_text(json.dumps({"type": "auth_ok"}))
+        manager.attach(conn)
         logger.info("bridge: agent authenticated")
 
         while not conn.closed:
@@ -165,7 +161,7 @@ def serve(handler: Any, manager: Any) -> None:
                     message = json.loads(payload.decode("utf-8"))
                 except (json.JSONDecodeError, UnicodeDecodeError):
                     continue
-                manager._on_message(message)  # noqa: SLF001
+                manager._on_message(message, conn)  # noqa: SLF001
             # binary/continuation frames ignored
     except (ConnectionError, socket.timeout, OSError):
         pass
