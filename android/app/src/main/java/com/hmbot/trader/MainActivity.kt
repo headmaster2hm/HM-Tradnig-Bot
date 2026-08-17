@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Bundle
+import android.os.Message
 import android.view.View
 import android.webkit.*
 import android.widget.Toast
@@ -69,11 +70,10 @@ class MainActivity : AppCompatActivity() {
             override fun onReceivedHttpError(
                 view: WebView?,
                 request: WebResourceRequest?,
-                errorCode: Int,
-                errorDescription: String?
+                errorResponse: WebResourceResponse?
             ) {
-                super.onReceivedHttpError(view, request, errorCode, errorDescription)
-                if (request?.isForMainFrame == true && errorCode >= 500) {
+                super.onReceivedHttpError(view, request, errorResponse)
+                if (request?.isForMainFrame == true && (errorResponse?.statusCode ?: 0) >= 500) {
                     showOffline()
                 }
             }

@@ -46,6 +46,7 @@ class RsiEmaStrategy(BaseStrategy):
             rsi_period=ind.rsi_period,
             ema_fast=ind.ema_fast,
             ema_slow=ind.ema_slow,
+            trend_ema_period=ind.trend_ema_period,
         )
         return self.indicators
 
@@ -66,6 +67,8 @@ class RsiEmaStrategy(BaseStrategy):
             spread_limit=self.config.spread_limit,
             has_buy=has_buy,
             has_sell=has_sell,
+            min_confidence=self.config.min_confidence,
+            use_trend_filter=self.config.use_trend_filter,
         )
 
     def latest_values(self) -> dict[str, Any]:

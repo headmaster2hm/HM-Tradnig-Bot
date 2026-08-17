@@ -589,6 +589,8 @@ const SETTINGS_GROUPS = [
     fields: [
       { key: "stop_loss_points", label: "Stop loss (points)", type: "number" },
       { key: "take_profit_points", label: "Take profit (points)", type: "number" },
+      { key: "trailing_stop_points", label: "Trailing stop (points)", type: "number" },
+      { key: "min_confidence", label: "Min confidence %", type: "number" },
       { key: "spread_limit", label: "Spread limit (points)", type: "number" },
       { key: "cooldown_candles", label: "Cooldown (candles)", type: "number" },
       { key: "max_trades_per_day", label: "Max trades per day", type: "number" },
@@ -596,6 +598,7 @@ const SETTINGS_GROUPS = [
       { key: "daily_loss_limit", label: "Daily loss limit", type: "number" },
       { key: "use_risk_sizing", label: "Adaptive risk-% sizing", type: "check" },
       { key: "risk_percent", label: "Risk % per trade", type: "number", step: "0.1" },
+      { key: "use_trend_filter", label: "Trend filter (EMA 200)", type: "check" },
       { key: "close_on_reverse", label: "Close on reverse signal", type: "check" },
       { key: "session_start", label: "Session start (HH:MM)", type: "text" },
       { key: "session_end", label: "Session end (HH:MM)", type: "text" },
@@ -615,6 +618,7 @@ const SETTINGS_GROUPS = [
       { key: "indicators.rsi_period", label: "RSI period", type: "number" },
       { key: "indicators.ema_fast", label: "EMA fast (on RSI)", type: "number" },
       { key: "indicators.ema_slow", label: "EMA slow (on EMA fast)", type: "number" },
+      { key: "indicators.trend_ema_period", label: "Trend EMA period", type: "number" },
     ],
   },
   {

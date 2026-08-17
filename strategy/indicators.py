@@ -83,18 +83,21 @@ def mt5_ema(series: pd.Series, period: int) -> pd.Series:
 def compute_rsi_stack(
     close: pd.Series,
     rsi_period: int = 14,
-    ema_fast: int = 48,
-    ema_slow: int = 50,
+    ema_fast: int = 8,
+    ema_slow: int = 21,
+    trend_ema_period: int = 200,
 ) -> pd.DataFrame:
-    """Build RSI + EMA48(on RSI) + EMA50(on EMA48) exactly like the MT5 window."""
+    """Build RSI + fast/slow EMAs on RSI + trend EMA on price."""
     rsi = wilder_rsi(close, rsi_period)
-    ema48 = mt5_ema(rsi, ema_fast)  # Apply to First Indicator's Data
-    ema50 = mt5_ema(ema48, ema_slow)  # Apply to Previous Indicator's Data
+    ema_fast_series = mt5_ema(rsi, ema_fast)
+    ema_slow_series = mt5_ema(ema_fast_series, ema_slow)
+    trend_ema = mt5_ema(close, trend_ema_period)
     frame = pd.DataFrame(
         {
             "rsi": rsi,
-            "ema48": ema48,
-            "ema50": ema50,
+            "ema48": ema_fast_series,
+            "ema50": ema_slow_series,
+            "trend_ema": trend_ema,
         },
         index=close.index,
     )

@@ -586,6 +586,40 @@ class MT5Client:
                 closed.append(result)
         return closed
 
+    def modify_position(self, ticket: int, sl: float, tp: float) -> bool:
+        """Modify SL/TP of an open position. Returns True on success."""
+        if self.config.dry_run:
+            for pos in self._paper_positions:
+                if pos["ticket"] == ticket:
+                    pos["sl"] = sl
+                    pos["tp"] = tp
+                    return True
+            return False
+
+        if not self.ensure_connected() or self._mt5 is None:
+            self._set_error("MT5 not connected — cannot modify position")
+            return False
+
+        info = self._symbol_info()
+        if info is None:
+            self._set_error(f"Could not load symbol info for '{self.config.symbol}'")
+            return False
+
+        sl = self._normalize_price(sl, info) if sl > 0 else 0.0
+        tp = self._normalize_price(tp, info) if tp > 0 else 0.0
+
+        request = {
+            "action": self._mt5.TRADE_ACTION_SLTP,
+            "position": ticket,
+            "sl": sl,
+            "tp": tp,
+        }
+        result = self._mt5.order_send(request)
+        if result is None or result.retcode != self._mt5.TRADE_RETCODE_DONE:
+            self._set_error(f"Modify failed: {self._format_order_error(result)}")
+            return False
+        return True
+
     def deal_close_info(self, position_ticket: int) -> dict[str, Any] | None:
         """Look up broker deal history for a position that left the Trade tab."""
         if not self.ensure_connected() or self._mt5 is None:

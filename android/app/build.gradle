@@ -14,15 +14,24 @@ android {
         versionCode 1
         versionName "1.0.0"
 
-        // Server URL — change for production
         buildConfigField "String", "SERVER_URL", '"https://tradebot.headmaster.fun"'
+    }
+
+    signingConfigs {
+        release {
+            storeFile file("../hmbot-release.jks")
+            storePassword "hmbot2026"
+            keyAlias "hmbot"
+            keyPassword "hmbot2026"
+        }
     }
 
     buildTypes {
         release {
-            minifyEnabled false
+            minifyEnabled true
+            shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            signingConfig signingConfigs.debug
+            signingConfig signingConfigs.release
         }
         debug {
             applicationIdSuffix ".debug"

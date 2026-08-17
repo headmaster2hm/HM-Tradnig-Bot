@@ -90,6 +90,8 @@ def evaluate_signals(
     spread_limit: float,
     has_buy: bool,
     has_sell: bool,
+    min_confidence: float = 40.0,
+    use_trend_filter: bool = True,
 ) -> TradeSignal:
     """Evaluate the latest closed bar for BUY / SELL / HOLD."""
     if len(indicators) < 3:
@@ -109,6 +111,10 @@ def evaluate_signals(
     prev_rsi = _safe(prev["rsi"])
     bar_time = indicators.index[idx] if hasattr(indicators.index[idx], "isoformat") else None
 
+    # Trend filter — price vs EMA(200) on close
+    trend_ema_val = _safe(row.get("trend_ema", float("nan")))
+    price = float(candle["close"])
+
     cross = detect_crossover(
         _safe(prev["ema48"]),
         _safe(prev["ema50"]),
@@ -127,25 +133,60 @@ def evaluate_signals(
         spread_limit=spread_limit,
     )
 
+    # Confidence gate — reject weak signals
+    if cross in ("up", "down") and confidence < min_confidence:
+        direction = "BUY" if cross == "up" else "SELL"
+        return TradeSignal(
+            SignalType.HOLD,
+            rsi,
+            ema48,
+            ema50,
+            confidence,
+            f"{direction} signal rejected: confidence {confidence:.0f}% < {min_confidence:.0f}%",
+            bar_time,
+        )
+
     if cross == "up" and rsi > 50 and not has_buy:
+        # Trend filter: only BUY when price is above trend EMA
+        if use_trend_filter and not np.isnan(trend_ema_val) and price < trend_ema_val:
+            return TradeSignal(
+                SignalType.HOLD,
+                rsi,
+                ema48,
+                ema50,
+                confidence,
+                "BUY signal rejected: price below trend EMA",
+                bar_time,
+            )
         return TradeSignal(
             SignalType.BUY,
             rsi,
             ema48,
             ema50,
             confidence,
-            "EMA48 crossed above EMA50 with RSI > 50",
+            "EMA fast crossed above slow with RSI > 50",
             bar_time,
         )
 
     if cross == "down" and rsi < 50 and not has_sell:
+        # Trend filter: only SELL when price is below trend EMA
+        if use_trend_filter and not np.isnan(trend_ema_val) and price > trend_ema_val:
+            return TradeSignal(
+                SignalType.HOLD,
+                rsi,
+                ema48,
+                ema50,
+                confidence,
+                "SELL signal rejected: price above trend EMA",
+                bar_time,
+            )
         return TradeSignal(
             SignalType.SELL,
             rsi,
             ema48,
             ema50,
             confidence,
-            "EMA48 crossed below EMA50 with RSI < 50",
+            "EMA fast crossed below slow with RSI < 50",
             bar_time,
         )
 

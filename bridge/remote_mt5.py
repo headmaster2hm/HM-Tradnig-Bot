@@ -217,6 +217,10 @@ class RemoteMT5:
         result = self._call_soft("order_send", {"request": request}, timeout=20.0)
         return _obj(result)
 
+    def position_modify(self, ticket: int, sl: float, tp: float) -> SimpleNamespace | None:
+        result = self._call_soft("position_modify", {"ticket": ticket, "sl": sl, "tp": tp}, timeout=10.0)
+        return _obj(result)
+
     def history_deals_get(self, date_from: Any, date_to: Any) -> tuple[SimpleNamespace, ...]:
         start = int(date_from.timestamp()) if hasattr(date_from, "timestamp") else int(date_from)
         stop = int(date_to.timestamp()) if hasattr(date_to, "timestamp") else int(date_to)

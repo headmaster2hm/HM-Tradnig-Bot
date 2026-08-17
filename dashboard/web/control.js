@@ -447,10 +447,12 @@ async function renderAccount(content, topRight) {
 /* ------------------------------------------------------------------ */
 const NUMERIC_FIELDS = new Set([
   "lot_size", "risk_percent", "stop_loss_points", "take_profit_points",
+  "trailing_stop_points", "min_confidence",
   "magic_number", "slippage", "spread_limit", "cooldown_candles",
   "max_trades_per_day", "daily_profit_target", "daily_loss_limit",
   "candle_count", "poll_interval_ms",
   "indicators.rsi_period", "indicators.ema_fast", "indicators.ema_slow",
+  "indicators.trend_ema_period",
   "mt5.login",
 ]);
 
@@ -483,6 +485,8 @@ async function renderSettings(content, topRight) {
     ["risk_percent", "Risk %"],
     ["stop_loss_points", "Stop loss (pts)"],
     ["take_profit_points", "Take profit (pts)"],
+    ["trailing_stop_points", "Trailing stop (pts)"],
+    ["min_confidence", "Min confidence %"],
     ["magic_number", "Magic number"],
     ["slippage", "Slippage"],
     ["spread_limit", "Spread limit"],
@@ -495,6 +499,7 @@ async function renderSettings(content, topRight) {
   ];
   const boolFields = [
     ["use_risk_sizing", "Adaptive risk % sizing"],
+    ["use_trend_filter", "Trend filter (EMA 200)"],
     ["close_on_reverse", "Close on reverse signal"],
     ["dry_run", "Dry run (paper)"],
     ["enable_notifications", "Notifications"],
@@ -512,6 +517,7 @@ async function renderSettings(content, topRight) {
   ig.appendChild(inputField("RSI period", "indicators.rsi_period", "number", config.indicators && config.indicators.rsi_period));
   ig.appendChild(inputField("EMA fast", "indicators.ema_fast", "number", config.indicators && config.indicators.ema_fast));
   ig.appendChild(inputField("EMA slow", "indicators.ema_slow", "number", config.indicators && config.indicators.ema_slow));
+  ig.appendChild(inputField("Trend EMA period", "indicators.trend_ema_period", "number", config.indicators && config.indicators.trend_ema_period));
   form.appendChild(ig);
 
   form.appendChild(rule());

@@ -20,8 +20,9 @@ def default_settings_path() -> Path:
 @dataclass
 class IndicatorConfig:
     rsi_period: int = 14
-    ema_fast: int = 48
-    ema_slow: int = 50
+    ema_fast: int = 8
+    ema_slow: int = 21
+    trend_ema_period: int = 200
     rsi_levels: list[int] = field(
         default_factory=lambda: [0, 15, 30, 39, 50, 63, 70, 85, 100]
     )
@@ -71,6 +72,9 @@ class AppConfig:
     session_start: str = "00:00"
     session_end: str = "23:59"
     close_on_reverse: bool = True
+    trailing_stop_points: float = 100.0
+    min_confidence: float = 40.0
+    use_trend_filter: bool = True
     dry_run: bool = True
     enable_notifications: bool = True
     dark_mode: bool = True
@@ -118,6 +122,9 @@ def _build_config(data: dict[str, Any]) -> AppConfig:
         session_start=str(data["session_start"]),
         session_end=str(data["session_end"]),
         close_on_reverse=bool(data["close_on_reverse"]),
+        trailing_stop_points=float(data.get("trailing_stop_points", 100.0)),
+        min_confidence=float(data.get("min_confidence", 40.0)),
+        use_trend_filter=bool(data.get("use_trend_filter", True)),
         dry_run=bool(data["dry_run"]),
         enable_notifications=bool(data["enable_notifications"]),
         dark_mode=bool(data["dark_mode"]),
@@ -129,7 +136,13 @@ def _build_config(data: dict[str, Any]) -> AppConfig:
             chat_id=str(tg.get("chat_id", "")),
             remember_token=bool(tg.get("remember_token", False)),
         ),
-        indicators=IndicatorConfig(**data["indicators"]),
+        indicators=IndicatorConfig(
+            rsi_period=int(data["indicators"].get("rsi_period", 14)),
+            ema_fast=int(data["indicators"].get("ema_fast", 8)),
+            ema_slow=int(data["indicators"].get("ema_slow", 21)),
+            trend_ema_period=int(data["indicators"].get("trend_ema_period", 200)),
+            rsi_levels=data["indicators"].get("rsi_levels", [0, 15, 30, 39, 50, 63, 70, 85, 100]),
+        ),
         mt5=MT5Config(
             path=str(mt5.get("path", "")),
             login=int(mt5.get("login", 0) or 0),

@@ -206,6 +206,39 @@ class TradeExecutor:
     def _has_side(self, side: str) -> bool:
         return any(p["type"] == side for p in self.client.positions())
 
+    def _update_trailing_stops(self, positions: list[dict[str, Any]]) -> None:
+        """Move SL to lock in profit when position is ahead by trailing_stop_points."""
+        trail = self.config.trailing_stop_points
+        if trail <= 0:
+            return
+        point = self.client.symbol_point()
+        if point <= 0:
+            return
+        tick = self.client.symbol_tick(allow_simulated=self.config.dry_run)
+        if tick is None:
+            return
+        for pos in positions:
+            side = pos["type"]
+            entry = pos["price_open"]
+            ticket = pos["ticket"]
+            current_sl = pos.get("sl", 0.0)
+            if side == "BUY":
+                current_price = tick["bid"]
+                profit_pts = (current_price - entry) / point
+                if profit_pts >= trail:
+                    new_sl = entry + (profit_pts - trail) * point
+                    if new_sl > current_sl or current_sl <= 0:
+                        self.client.modify_position(ticket, new_sl, pos.get("tp", 0.0))
+                        self._log(f"Trailing SL BUY #{ticket}: {current_sl:.5f} → {new_sl:.5f}")
+            elif side == "SELL":
+                current_price = tick["ask"]
+                profit_pts = (entry - current_price) / point
+                if profit_pts >= trail:
+                    new_sl = entry - (profit_pts - trail) * point
+                    if new_sl < current_sl or current_sl <= 0:
+                        self.client.modify_position(ticket, new_sl, pos.get("tp", 0.0))
+                        self._log(f"Trailing SL SELL #{ticket}: {current_sl:.5f} → {new_sl:.5f}")
+
     def tick(self) -> BotSnapshot:
         candles = self.client.copy_rates()
         indicators = self.strategy.prepare(candles)
@@ -215,6 +248,9 @@ class TradeExecutor:
         # Sync broker-side closes before decisions
         self._reconcile_broker_closes(positions)
         positions = self.client.positions()
+
+        # Trail SL to lock in profit
+        self._update_trailing_stops(positions)
 
         has_buy = any(p["type"] == "BUY" for p in positions)
         has_sell = any(p["type"] == "SELL" for p in positions)

@@ -175,6 +175,17 @@ class BridgeAgent:
         if method == "order_send":
             request = dict(params.get("request") or {})
             return _to_json(mt5.order_send(**request))
+        if method == "position_modify":
+            ticket = int(params.get("ticket", 0))
+            sl = float(params.get("sl", 0))
+            tp = float(params.get("tp", 0))
+            request = {
+                "action": mt5.TRADE_ACTION_SLTP,
+                "position": ticket,
+                "sl": sl,
+                "tp": tp,
+            }
+            return _to_json(mt5.order_send(request))
         if method == "history_deals_get":
             return _to_json(
                 mt5.history_deals_get(
