@@ -160,7 +160,7 @@ class MainActivity : AppCompatActivity() {
         }
         binding.offlineView.visibility = View.GONE
         binding.webView.visibility = View.VISIBLE
-        binding.webView.loadUrl(BuildConfig.SERVER_URL)
+        binding.webView.loadUrl("${BuildConfig.SERVER_URL}/app")
     }
 
     private fun showOffline() {
