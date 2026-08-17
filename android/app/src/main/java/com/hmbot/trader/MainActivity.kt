@@ -18,13 +18,29 @@ import com.hmbot.trader.databinding.ActivityMainBinding
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
-    private var currentPageUrl: String = ""
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+
+        val prefs = getSharedPreferences("hmbot", MODE_PRIVATE)
+        val account = prefs.getString("mt5_account", "") ?: ""
+        binding.tvAccount.text = if (account.isNotEmpty()) "Account: $account" else ""
+
+        binding.btnLogout.setOnClickListener {
+            androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("Logout")
+                .setMessage("This will clear your saved credentials and return to the login screen.")
+                .setPositiveButton("Logout") { _, _ ->
+                    prefs.edit().clear().apply()
+                    startActivity(Intent(this, LoginActivity::class.java))
+                    finish()
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
 
         binding.webView.settings.apply {
             javaScriptEnabled = true
@@ -45,8 +61,6 @@ class MainActivity : AppCompatActivity() {
                 view: WebView?,
                 request: WebResourceRequest?
             ): Boolean {
-                val url = request?.url?.toString() ?: return false
-                currentPageUrl = url
                 return false
             }
 
@@ -95,8 +109,7 @@ class MainActivity : AppCompatActivity() {
                         view: WebView?,
                         request: WebResourceRequest?
                     ): Boolean {
-                        val url = request?.url?.toString() ?: return false
-                        val intent = Intent(Intent.ACTION_VIEW, request.url)
+                        val intent = Intent(Intent.ACTION_VIEW, request?.url)
                         startActivity(intent)
                         return true
                     }

@@ -6,4 +6,8 @@
         <item name="android:windowBackground">@color/bg_dark</item>
         <item name="android:windowLightStatusBar">false</item>
     </style>
+
+    <style name="Theme.HMBotTrader.Splash" parent="Theme.HMBotTrader">
+        <item name="android:windowNoTitle">true</item>
+    </style>
 </resources>
