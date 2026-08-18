@@ -43,7 +43,7 @@ class _Connection:
 class _AgentState:
     """Tracks one connected bridge agent."""
 
-    __slots__ = ("conn", "agent_key", "login", "telemetry", "last_telemetry_at", "attached_since")
+    __slots__ = ("conn", "agent_key", "login", "telemetry", "last_telemetry_at", "attached_since", "version")
 
     def __init__(self, conn: _Connection, agent_key: str) -> None:
         self.conn = conn
@@ -52,6 +52,7 @@ class _AgentState:
         self.telemetry: dict[str, Any] = {}
         self.last_telemetry_at: float | None = None
         self.attached_since: float = time.time()
+        self.version: str = ""
 
 
 class BridgeManager:
@@ -66,6 +67,10 @@ class BridgeManager:
         self._state_lock = threading.Lock()
         self.on_telemetry: Callable[[dict[str, Any]], None] | None = None
         self._last_log = 0.0
+        self._latest_agent_version: str = ""
+        self._update_url: str = ""
+        self._update_sha256: str = ""
+        self._updated_agents: set[str] = set()
 
     # -- transport -------------------------------------------------------
     def attach(self, conn: _Connection) -> bool:
@@ -84,6 +89,9 @@ class BridgeManager:
             old_key = self._conn_to_key.get(id(conn))
             if old_key is None:
                 return
+            # Already identified as this login — nothing to do
+            if old_key == login:
+                return
             agent = self._agents.pop(old_key, None)
             if agent is None:
                 return
@@ -93,10 +101,7 @@ class BridgeManager:
             if login in self._agents:
                 old = self._agents[login]
                 logger.info("bridge: replacing previous agent for login %s", login)
-                try:
-                    old.conn.close()
-                except Exception:  # noqa: BLE001
-                    pass
+                old.conn.closed = True
             self._agents[login] = agent
             self._conn_to_key[id(conn)] = login
             logger.info("bridge: agent identified as login %s", login)
@@ -105,9 +110,17 @@ class BridgeManager:
         with self._state_lock:
             key = self._conn_to_key.pop(id(conn), None)
             if key is not None:
-                agent = self._agents.pop(key, None)
-                if agent is not None and agent.login:
-                    logger.info("bridge: agent %s detached", agent.login)
+                agent = self._agents.get(key)
+                # Only remove the agent if THIS connection is still the active one.
+                # If a newer connection has already replaced it, leave it alone.
+                if agent is not None and agent.conn is conn:
+                    self._agents.pop(key, None)
+                    if agent.login:
+                        logger.info("bridge: agent %s detached", agent.login)
+                    else:
+                        logger.info("bridge: unidentified agent detached")
+                elif agent is not None:
+                    logger.debug("bridge: ignoring detach for superseded connection")
                 else:
                     logger.info("bridge: unidentified agent detached")
             else:
@@ -140,6 +153,7 @@ class BridgeManager:
             for agent in self._agents.values():
                 if not agent.conn.closed:
                     return agent
+            logger.warning("bridge _get_agent: agents=%s", {k: (v.login, v.conn.closed) for k, v in self._agents.items()})
             return None
 
     def _send_to(self, payload: dict[str, Any], conn: _Connection) -> None:
@@ -178,6 +192,7 @@ class BridgeManager:
             self._pending[msg_id] = (event, holder)
         try:
             self._send_to({"id": msg_id, "method": method, "params": params or {}}, agent.conn)
+            logger.debug("bridge: sent %s (id=%d) to %s", method, msg_id, agent.login or agent.agent_key)
         except BridgeError:
             with self._pending_lock:
                 self._pending.pop(msg_id, None)
@@ -199,6 +214,7 @@ class BridgeManager:
             with self._pending_lock:
                 entry = self._pending.pop(msg_id, None)
             if entry is None:
+                logger.debug("bridge: response for unknown msg_id %s", msg_id)
                 return
             event, holder = entry
             if "error" in payload:
@@ -221,8 +237,27 @@ class BridgeManager:
                     if conn is not None:
                         key = self._conn_to_key.get(id(conn))
                         if key and key in self._agents:
-                            self._agents[key].telemetry = data
-                            self._agents[key].last_telemetry_at = time.time()
+                            agent = self._agents[key]
+                            agent.telemetry = data
+                            agent.last_telemetry_at = time.time()
+                            version = str(data.get("version") or "").strip()
+                            if version:
+                                agent.version = version
+                            # Push update if version is outdated
+                            if (
+                                version
+                                and self._latest_agent_version
+                                and version != self._latest_agent_version
+                                and self._update_url
+                                and key not in self._updated_agents
+                            ):
+                                self._updated_agents.add(key)
+                                threading.Thread(
+                                    target=self._push_update,
+                                    args=(conn, agent.login or key),
+                                    daemon=True,
+                                    name="push-update",
+                                ).start()
                 if self.on_telemetry is not None:
                     try:
                         self.on_telemetry(data)
@@ -251,6 +286,7 @@ class BridgeManager:
                     "name": acct.get("name"),
                     "balance": acct.get("balance"),
                     "currency": acct.get("currency"),
+                    "version": agent.version,
                     "since": agent.attached_since,
                     "last_telemetry_at": agent.last_telemetry_at,
                 })
@@ -271,6 +307,27 @@ class BridgeManager:
         )
         result = {**primary, "agents": agents_info}
         return result
+
+    def set_update_info(self, version: str, url: str, sha256: str = "") -> None:
+        self._latest_agent_version = version
+        self._update_url = url
+        self._update_sha256 = sha256
+        self._updated_agents.clear()
+        logger.info("bridge: update info set — latest version %s", version)
+
+    def _push_update(self, conn: _Connection, login: str) -> None:
+        with self._pending_lock:
+            self._next_id += 1
+            msg_id = self._next_id
+        try:
+            self._send_to({
+                "id": msg_id,
+                "method": "agent.update",
+                "params": {"url": self._update_url, "sha256": self._update_sha256},
+            }, conn)
+            logger.info("bridge: pushed update to agent %s", login)
+        except BridgeError:
+            pass
 
     def _throttled_log(self, fmt: str, *args: Any) -> None:
         now = time.time()

@@ -4,7 +4,7 @@
 ; Expects dist\HM_Bridge_Agent.exe already built by PyInstaller (agent_app.spec).
 
 #define MyAppName "HM Bridge Agent"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "HM Bot Trader"
 #define MyAppExeName "HM_Bridge_Agent.exe"
 #define MyAppId "0B7C2E9F-4A6D-4E88-BC1D-9F3A5E7B2C14"

@@ -43,6 +43,8 @@ ROOT = Path(__file__).resolve().parent.parent
 ASSETS_DIR = ROOT / "assets"
 WINDOWS_SETUP = ASSETS_DIR / "HMBotTrader.zip"
 WINDOWS_VERSION = "1.1.0"
+AGENT_EXE = ASSETS_DIR / "HM_Bridge_Agent.exe"
+AGENT_VERSION = "1.1.0"
 
 # Hosts that are the public website. When the homepage is reached through one
 # of these the browser gets the download page instead of the local dashboard.
@@ -502,6 +504,12 @@ MIME = {
 
 def make_handler(engine: Engine) -> type[BaseHTTPRequestHandler]:
     get_manager().on_telemetry = _register_connected_account
+    update_url = ""
+    update_sha256 = ""
+    if AGENT_EXE.is_file():
+        update_url = "https://tradebot.headmaster.fun/api/agent/update"
+        update_sha256 = _file_sha256(AGENT_EXE)
+    get_manager().set_update_info(AGENT_VERSION, update_url, update_sha256)
 
     class DashboardHandler(BaseHTTPRequestHandler):
         server_version = "HM Bot Trader/1.0"
@@ -608,6 +616,50 @@ def make_handler(engine: Engine) -> type[BaseHTTPRequestHandler]:
             self.end_headers()
             try:
                 with WINDOWS_SETUP.open("rb") as handle:
+                    while True:
+                        chunk = handle.read(256 * 1024)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+        def _agent_version_info(self) -> None:
+            info: dict[str, Any] = {"ok": False, "version": AGENT_VERSION}
+            if not AGENT_EXE.is_file():
+                self._send_json(info, 404)
+                return
+            try:
+                size = AGENT_EXE.stat().st_size
+            except OSError as exc:
+                self._send_json({**info, "error": str(exc)}, 500)
+                return
+            info["ok"] = True
+            info["size_bytes"] = size
+            info["size_human"] = _human_bytes(size)
+            info["sha256"] = _file_sha256(AGENT_EXE)
+            self._send_json(info)
+
+        def _agent_update_download(self) -> None:
+            if not AGENT_EXE.is_file():
+                self._send_json({"ok": False, "error": "Agent binary not found."}, 404)
+                return
+            try:
+                size = AGENT_EXE.stat().st_size
+            except OSError as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 500)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header(
+                "Content-Disposition", 'attachment; filename="HM_Bridge_Agent.exe"'
+            )
+            self.send_header("Content-Length", str(size))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            try:
+                with AGENT_EXE.open("rb") as handle:
                     while True:
                         chunk = handle.read(256 * 1024)
                         if not chunk:
@@ -1154,6 +1206,10 @@ def make_handler(engine: Engine) -> type[BaseHTTPRequestHandler]:
                 self._download_info()
             elif path == "/api/download/windows":
                 self._download_windows()
+            elif path == "/api/agent/version":
+                self._agent_version_info()
+            elif path == "/api/agent/update":
+                self._agent_update_download()
             elif path.startswith("/api/control/"):
                 query = parse_qs(parsed.query)
                 self._handle_control_get(path, query)

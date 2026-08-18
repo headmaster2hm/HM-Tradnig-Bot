@@ -224,9 +224,33 @@ class MT5Client:
                 from bridge.remote_mt5 import RemoteMT5
 
                 target = str(self.config.mt5.login) if self.config.mt5.login else None
-                mt5: Any = RemoteMT5(target_account=target)
-                self._mt5 = mt5
-                logger.info("Using remote MT5 bridge (%s)", self.config.mt5_bridge.url)
+                if self._mt5 is None or not getattr(self._mt5, "_connected", False):
+                    mt5: Any = RemoteMT5(target_account=target)
+                    self._mt5 = mt5
+                    logger.info("Using remote MT5 bridge (%s)", self.config.mt5_bridge.url)
+                else:
+                    mt5 = self._mt5
+
+                # For bridge mode, ensure MT5 is initialized on the agent,
+                # then verify the agent is reachable via account_info.
+                for attempt in range(3):
+                    if not getattr(mt5, "_connected", False):
+                        mt5.initialize()
+                    info = mt5.account_info()
+                    if info:
+                        self.connected = True
+                        logger.info(
+                            "Connected to MT5 via bridge — %s | %s | balance %.2f",
+                            info.login,
+                            info.server,
+                            info.balance,
+                        )
+                        return True
+                    if attempt < 2:
+                        time.sleep(1.0)
+                logger.warning("bridge account_info returned None after 3 attempts")
+                self.connected = False
+                return False
             else:
                 import MetaTrader5 as mt5
 
@@ -284,9 +308,12 @@ class MT5Client:
             except Exception:  # noqa: BLE001
                 logger.warning("MT5 connection lost — reconnecting")
             self.connected = False
-        if now - self._last_connect_attempt < 5.0:
+        # For bridge mode, retry more frequently (agent may be reconnecting)
+        cooldown = 2.0 if (getattr(self.config, "mt5_bridge", None) and self.config.mt5_bridge.enabled) else 5.0
+        if now - self._last_connect_attempt < cooldown:
             return self.connected
         self._last_connect_attempt = now
+        logger.info("mt5_client: attempting bridge connect")
         return self.connect()
 
     def shutdown(self) -> None:

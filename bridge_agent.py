@@ -20,12 +20,15 @@ already logged in. Leave them out if the terminal is already signed in.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
+import subprocess
 import sys
 import threading
 import time
+import urllib.request
 from datetime import date, datetime
 from typing import Any
 
@@ -33,6 +36,8 @@ try:
     import numpy as np
 except ImportError:  # pragma: no cover
     np = None  # type: ignore[assignment]
+
+__version__ = "1.1.0"
 
 TELEMETRY_INTERVAL = 1.0
 MAX_PAYLOAD = 4 * 1024 * 1024
@@ -85,10 +90,17 @@ class BridgeAgent:
         self._mt5 = None
         self._mt5_ready = False
         self._mt5_lock = threading.Lock()
+        self._send_lock = threading.Lock()
         self.connected = False
         self.account: Any = None
         self.status_text = "idle"
         self.last_error_text = ""
+
+    # -- thread-safe WebSocket send ---------------------------------------
+    def _ws_send(self, ws: Any, data: str) -> None:
+        """Serialize all outgoing WebSocket frames to prevent corruption."""
+        with self._send_lock:
+            ws.send(data)
 
     # -- MT5 wrappers ----------------------------------------------------
     def _import_mt5(self) -> bool:
@@ -132,69 +144,125 @@ class BridgeAgent:
             return ok
 
     def _dispatch(self, method: str, params: dict[str, Any]) -> Any:
+        log = logging.getLogger("agent")
+
+        if method == "update":
+            return self._handle_update(params, log)
+        if method == "version":
+            return __version__
+
         if not self._import_mt5():
             return {"_hm_error": self._last_init_error}
-        mt5 = self._mt5
+        if method != "initialize" and not self._ensure_mt5_ready():
+            return {"_hm_error": self._last_init_error or "MT5 not initialized"}
 
         if method == "initialize":
             return self._ensure_mt5_ready()
-        if method == "shutdown":
-            return bool(mt5.shutdown())
-        if method == "terminal_info":
-            return _to_json(mt5.terminal_info())
-        if method == "account_info":
-            return _to_json(mt5.account_info())
-        if method == "symbol_info":
-            return _to_json(mt5.symbol_info(params.get("symbol")))
-        if method == "symbol_select":
-            return bool(mt5.symbol_select(params.get("symbol"), bool(params.get("enable", True))))
-        if method == "symbol_info_tick":
-            return _to_json(mt5.symbol_info_tick(params.get("symbol")))
-        if method == "copy_rates_from_pos":
-            rates = mt5.copy_rates_from_pos(
-                params.get("symbol"),
-                int(params.get("timeframe", 1)),
-                int(params.get("start", 0)),
-                int(params.get("count", 100)),
-            )
-            return _rates_json(rates)
-        if method == "copy_rates_range":
-            rates = mt5.copy_rates_range(
-                params.get("symbol"),
-                int(params.get("timeframe", 1)),
-                int(params.get("start", 0)),
-                int(params.get("stop", 0)),
-            )
-            return _rates_json(rates)
-        if method == "positions_get":
-            symbol = params.get("symbol") or None
-            return _to_json(mt5.positions_get(symbol=symbol))
-        if method == "orders_get":
-            symbol = params.get("symbol") or None
-            return _to_json(mt5.orders_get(symbol=symbol))
-        if method == "order_send":
-            request = dict(params.get("request") or {})
-            return _to_json(mt5.order_send(**request))
-        if method == "position_modify":
-            ticket = int(params.get("ticket", 0))
-            sl = float(params.get("sl", 0))
-            tp = float(params.get("tp", 0))
-            request = {
-                "action": mt5.TRADE_ACTION_SLTP,
-                "position": ticket,
-                "sl": sl,
-                "tp": tp,
-            }
-            return _to_json(mt5.order_send(request))
-        if method == "history_deals_get":
-            return _to_json(
-                mt5.history_deals_get(
-                    int(params.get("date_from", 0)), int(params.get("date_to", 0))
-                )
-            )
-        if method == "last_error":
-            return mt5.last_error()
+
+        mt5 = self._mt5
+        with self._mt5_lock:
+            try:
+                if method == "shutdown":
+                    return bool(mt5.shutdown())
+                if method == "terminal_info":
+                    return _to_json(mt5.terminal_info())
+                if method == "account_info":
+                    return _to_json(mt5.account_info())
+                if method == "symbol_info":
+                    return _to_json(mt5.symbol_info(params.get("symbol")))
+                if method == "symbol_select":
+                    return bool(mt5.symbol_select(params.get("symbol"), bool(params.get("enable", True))))
+                if method == "symbol_info_tick":
+                    return _to_json(mt5.symbol_info_tick(params.get("symbol")))
+                if method == "copy_rates_from_pos":
+                    rates = mt5.copy_rates_from_pos(
+                        params.get("symbol"),
+                        int(params.get("timeframe", 1)),
+                        int(params.get("start", 0)),
+                        int(params.get("count", 100)),
+                    )
+                    return _rates_json(rates)
+                if method == "copy_rates_range":
+                    rates = mt5.copy_rates_range(
+                        params.get("symbol"),
+                        int(params.get("timeframe", 1)),
+                        int(params.get("start", 0)),
+                        int(params.get("stop", 0)),
+                    )
+                    return _rates_json(rates)
+                if method == "positions_get":
+                    symbol = params.get("symbol") or None
+                    return _to_json(mt5.positions_get(symbol=symbol))
+                if method == "orders_get":
+                    symbol = params.get("symbol") or None
+                    return _to_json(mt5.orders_get(symbol=symbol))
+                if method == "order_send":
+                    request = dict(params.get("request") or {})
+                    return _to_json(mt5.order_send(**request))
+                if method == "position_modify":
+                    ticket = int(params.get("ticket", 0))
+                    sl = float(params.get("sl", 0))
+                    tp = float(params.get("tp", 0))
+                    request = {
+                        "action": mt5.TRADE_ACTION_SLTP,
+                        "position": ticket,
+                        "sl": sl,
+                        "tp": tp,
+                    }
+                    return _to_json(mt5.order_send(request))
+                if method == "history_deals_get":
+                    return _to_json(
+                        mt5.history_deals_get(
+                            int(params.get("date_from", 0)), int(params.get("date_to", 0))
+                        )
+                    )
+                if method == "last_error":
+                    return mt5.last_error()
+            except Exception as exc:  # noqa: BLE001
+                log.error("mt5.%s failed: %s", method, exc)
+                raise
         return {"_hm_error": f"unknown method {method}"}
+
+    # -- auto-update -----------------------------------------------------
+    def _handle_update(self, params: dict[str, Any], log: logging.Logger) -> bool:
+        url = params.get("url", "")
+        expected_sha256 = params.get("sha256", "")
+        if not url:
+            return False
+        log.info("downloading update from %s", url)
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": f"HMBridgeAgent/{__version__}"})
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                data = resp.read()
+            if expected_sha256:
+                actual = hashlib.sha256(data).hexdigest()
+                if actual != expected_sha256:
+                    log.error("update hash mismatch: expected %s got %s", expected_sha256, actual)
+                    return False
+            if getattr(sys, "frozen", False):
+                app_dir = os.path.dirname(sys.executable)
+                update_dir = os.path.join(
+                    os.environ.get("LOCALAPPDATA", app_dir), "HMBotBridgeAgent", "updates"
+                )
+                os.makedirs(update_dir, exist_ok=True)
+                new_path = os.path.join(update_dir, os.path.basename(sys.executable))
+                with open(new_path, "wb") as fh:
+                    fh.write(data)
+                log.info("launching update from %s", new_path)
+                subprocess.Popen([new_path, "--autostart"])  # noqa: S603
+                os._exit(0)
+            else:
+                my_path = os.path.abspath(__file__)
+                tmp_path = my_path + ".tmp"
+                with open(tmp_path, "wb") as fh:
+                    fh.write(data)
+                os.replace(tmp_path, my_path)
+                log.info("updated, restarting...")
+                os.execv(sys.executable, [sys.executable] + sys.argv)
+        except Exception as exc:  # noqa: BLE001
+            log.error("update failed: %s", exc)
+            return False
+        return True
 
     # -- connection ------------------------------------------------------
     def _run_once(self) -> None:
@@ -203,7 +271,7 @@ class BridgeAgent:
         log = logging.getLogger("agent")
         ws = websocket.create_connection(self.url, timeout=20, max_size=MAX_PAYLOAD)
         try:
-            ws.send(json.dumps({"type": "auth", "token": self.token}))
+            self._ws_send(ws, json.dumps({"type": "auth", "token": self.token}))
             welcome = json.loads(ws.recv())
             if welcome.get("type") == "error":
                 raise RuntimeError(f"server rejected auth: {welcome.get('error')}")
@@ -233,7 +301,7 @@ class BridgeAgent:
                     continue
                 reply = self._handle_request(msg)
                 if reply is not None:
-                    ws.send(json.dumps(reply))
+                    self._ws_send(ws, json.dumps(reply))
         finally:
             self.connected = False
             self.status_text = "disconnected"
@@ -265,16 +333,21 @@ class BridgeAgent:
         while not self._stop.is_set():
             try:
                 if self._ensure_mt5_ready():
-                    mt5 = self._mt5
-                    account = _to_json(mt5.account_info())
+                    with self._mt5_lock:
+                        mt5 = self._mt5
+                        account = _to_json(mt5.account_info())
+                        terminal = _to_json(mt5.terminal_info())
+                        positions = _to_json(mt5.positions_get())
+                        last_error = mt5.last_error()
                     self.account = account
                     data = {
                         "account": account,
-                        "terminal": _to_json(mt5.terminal_info()),
-                        "positions": _to_json(mt5.positions_get()),
-                        "last_error": mt5.last_error(),
+                        "terminal": terminal,
+                        "positions": positions,
+                        "last_error": last_error,
+                        "version": __version__,
                     }
-                    ws.send(json.dumps({"type": "telemetry", "data": data}))
+                    self._ws_send(ws, json.dumps({"type": "telemetry", "data": data}))
                     if time.time() - last_ping > 30:
                         try:
                             ws.ping("hm")
@@ -317,6 +390,7 @@ def main() -> int:
     parser.add_argument("--password", default=os.environ.get("HM_MT5_PASSWORD", ""))
     parser.add_argument("--server", default="")
     parser.add_argument("--log", default="bridge_agent.log")
+    parser.add_argument("--autostart", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
 
     logging.basicConfig(
