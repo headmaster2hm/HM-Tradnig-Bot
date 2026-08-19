@@ -574,6 +574,13 @@ function renderBacktest(res, bars) {
 /* ------------------------------------------------------------------ */
 const SETTINGS_GROUPS = [
   {
+    title: "License",
+    fields: [
+      { key: "_license_key", label: "License key", type: "text" },
+      { key: "_license_account", label: "MT5 account number", type: "text" },
+    ],
+  },
+  {
     title: "Trading",
     fields: [
       { key: "symbol", label: "Symbol", type: "text" },
@@ -719,9 +726,20 @@ function collectSettings() {
 
 async function loadSettings() {
   try {
-    const data = await api("/api/settings");
+    const [data, lic] = await Promise.all([api("/api/settings"), api("/api/license/status")]);
     state.settings = data;
     buildSettingsForms(data.config);
+    /* Show current license status in the License section header */
+    const groups = document.querySelectorAll(".sgroup-head");
+    for (const h of groups) {
+      if (h.textContent === "License") {
+        if (lic.activated) {
+          h.textContent = "License — active (" + (lic.key_hint || "") + ", account " + (lic.mt5_account || "?") + ")";
+        } else {
+          h.textContent = "License — not activated";
+        }
+      }
+    }
     $("settings-notice").textContent = data.notices.length
       ? "⚠ " + data.notices.join(" · ")
       : "";
@@ -733,6 +751,24 @@ async function loadSettings() {
 $("btn-save-settings").addEventListener("click", async () => {
   if (!state.settings) return;
   const payload = collectSettings();
+
+  /* Activate license if key + account were provided */
+  const licKey = payload._license_key || "";
+  const licAcct = payload._license_account || "";
+  delete payload._license_key;
+  delete payload._license_account;
+  if (licKey || licAcct) {
+    if (!licKey) { toast("Enter a license key to activate.", "error"); return; }
+    if (!licAcct) { toast("Enter your MT5 account number.", "error"); return; }
+    try {
+      const res = await postJSON("/api/license/activate", { key: licKey, mt5_account: licAcct });
+      toast("License activated for MT5 account " + (res.mt5_account || licAcct), "success");
+    } catch (err) {
+      toast("License activation failed: " + err.message, "error");
+      return;
+    }
+  }
+
   const goingLive = payload.dry_run === false && state.settings.config.dry_run === true;
   if (goingLive) {
     const ok = window.confirm(
