@@ -695,6 +695,7 @@ def make_handler(engine: Engine) -> type[BaseHTTPRequestHandler]:
                 "Content-Type", MIME.get(target.suffix.lower(), "application/octet-stream")
             )
             self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store, must-revalidate")
             self.end_headers()
             self.wfile.write(body)
 
