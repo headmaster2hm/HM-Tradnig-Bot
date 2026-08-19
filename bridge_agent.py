@@ -91,6 +91,8 @@ class BridgeAgent:
         self._mt5_ready = False
         self._mt5_lock = threading.Lock()
         self._send_lock = threading.Lock()
+        self._init_backoff = 5.0
+        self._last_init_attempt = 0.0
         self.connected = False
         self.account: Any = None
         self.status_text = "idle"
@@ -120,27 +122,51 @@ class BridgeAgent:
 
         Initialization happens lazily from the telemetry loop (and never blocks
         the websocket reply path): the terminal launches/attaches on first use
-        and we retry each second until it succeeds.
+        and we retry with increasing backoff until it succeeds.
         """
         if self._mt5_ready:
             return True
         if not self._import_mt5():
             return False
+        now = time.time()
+        if now - self._last_init_attempt < self._init_backoff:
+            return False
+        self._last_init_attempt = now
         with self._mt5_lock:
             if self._mt5_ready:
                 return True
+            # Try without explicit path first (attach to any running terminal)
             try:
-                ok = bool(self._mt5.initialize(**self.init_kwargs))
-            except Exception as exc:  # noqa: BLE001
+                ok = bool(self._mt5.initialize())
+            except Exception:  # noqa: BLE001
                 ok = False
-                self._last_init_error = str(exc)
+            # Fall back to explicit path if provided
+            if not ok and self.init_kwargs.get("path"):
+                try:
+                    ok = bool(self._mt5.initialize(**self.init_kwargs))
+                except Exception:  # noqa: BLE001
+                    ok = False
             if ok:
                 self._mt5_ready = True
+                self._init_backoff = 5.0
+                info = self._mt5.account_info()
+                if info:
+                    self._last_init_error = ""
+                    logging.getLogger("agent").info(
+                        "MT5 ready — account %s (%s) on %s",
+                        info.login, info.name, info.server,
+                    )
+                else:
+                    self._last_init_error = "MT5 initialized but account_info returned None"
+                    logging.getLogger("agent").warning(self._last_init_error)
+                    ok = False
+                    self._mt5_ready = False
             else:
                 self._last_init_error = str(self._mt5.last_error())
                 logging.getLogger("agent").warning(
                     "MT5 initialize failed: %s", self._last_init_error
                 )
+                self._init_backoff = min(self._init_backoff * 1.5, 30.0)
             return ok
 
     def _dispatch(self, method: str, params: dict[str, Any]) -> Any:

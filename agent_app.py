@@ -292,6 +292,9 @@ class AgentApp:
         field("Server URL", "url", row=0)
         field("Bridge token", "token", secret=True, row=1)
         field("MetaTrader 5 terminal", "mt5_path", row=2)
+        field("MT5 Login (optional)", "mt5_login", row=3)
+        field("MT5 Password (optional)", "mt5_password", secret=True, row=4)
+        field("MT5 Server (optional)", "mt5_server", row=5)
 
         detect = tk.Button(box, text="Auto-detect MT5", command=self._detect,
                            bg=ACCENT, fg="white", relief="flat", padx=10, font=(FONT, 9, "bold"))
@@ -302,7 +305,7 @@ class AgentApp:
             box, text="Start automatically with Windows", variable=self._var_autostart,
             bg=CARD, fg=INK, activebackground=CARD, activeforeground=INK,
             selectcolor=BG, font=(FONT, 10), command=self._toggle_autostart,
-        ).grid(row=3, column=0, columnspan=3, sticky="w", padx=(14, 0), pady=(8, 12))
+        ).grid(row=6, column=0, columnspan=3, sticky="w", padx=(14, 0), pady=(8, 12))
 
         # buttons
         btns = tk.Frame(card, bg=BG)
@@ -420,8 +423,26 @@ class AgentApp:
 
     def _start_agent(self, token: str, kwargs: dict) -> None:
         url = self.var_url.get().strip() or DEFAULT_URL
-        self.cfg.update({"url": url, "token": token, "mt5_path": kwargs.get("path", "")})
+        self.cfg.update({
+            "url": url,
+            "token": token,
+            "mt5_path": kwargs.get("path", ""),
+            "mt5_login": self.var_mt5_login.get().strip(),
+            "mt5_password": self.var_mt5_password.get().strip(),
+            "mt5_server": self.var_mt5_server.get().strip(),
+        })
         _save_config(self.cfg)
+
+        # Pass optional MT5 login credentials if provided
+        mt5_login = int(self.cfg.get("mt5_login") or 0)
+        mt5_password = str(self.cfg.get("mt5_password") or "")
+        mt5_server = str(self.cfg.get("mt5_server") or "")
+        if mt5_login:
+            kwargs["login"] = mt5_login
+        if mt5_password:
+            kwargs["password"] = mt5_password
+        if mt5_server:
+            kwargs["server"] = mt5_server
 
         self.agent = BridgeAgent(url, token, kwargs)
         self.agent_thread = threading.Thread(target=self.agent.run, daemon=True)
