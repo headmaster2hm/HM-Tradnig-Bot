@@ -297,6 +297,13 @@ function renderTrading(s) {
     " · E48 " + (s.ema48 != null ? s.ema48.toFixed(2) : "—") +
     " · E50 " + (s.ema50 != null ? s.ema50.toFixed(2) : "—");
 
+  const running = s.status === "RUNNING" && !s.paused;
+  const paused = s.status === "RUNNING" && s.paused;
+  $("btn-start").disabled = running;
+  $("btn-pause").disabled = !running;
+  $("btn-stop").disabled = !(running || paused);
+  $("btn-closeall").disabled = s.positions.length === 0;
+
 }
 
 /* ------------------------------------------------------------------ */
@@ -314,6 +321,11 @@ async function runAction(action, value) {
   }
   poll();
 }
+
+$("btn-start").addEventListener("click", () => runAction("start"));
+$("btn-pause").addEventListener("click", () => runAction("pause"));
+$("btn-stop").addEventListener("click", () => runAction("stop"));
+$("btn-closeall").addEventListener("click", () => runAction("close_all"));
 
 /* ------------------------------------------------------------------ */
 /* positions view                                                      */
